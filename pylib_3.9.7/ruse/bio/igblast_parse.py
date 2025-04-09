@@ -42,7 +42,7 @@ def parse_igblastn_results(file: str) -> IgResult:
 
 
 def _parse_igblast_results(file: str, method: str) -> IgResult:
-    with open(file, 'r') as fh:
+    with open(file, 'r', encoding='utf8') as fh:
         lines: List[str] = fh.read().splitlines()
 
     lines.reverse()

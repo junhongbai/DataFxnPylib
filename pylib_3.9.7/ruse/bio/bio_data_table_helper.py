@@ -49,6 +49,13 @@ def genbank_cell_to_sequence(data_table, column_no: int, row_index: int) -> SeqR
 
 
 def string_to_sequence(data: str, row_index: int) -> SeqRecord:
+    """
+    Convert a string containing sequence data into a SeqRecord object
+
+    :param data: The target sequence
+    :param row_index: An integer referring to the row in a table from which the sequence was derived
+    """
+
     record = SeqRecord(Seq(data), id=f'row_{row_index}', name='', description='')
     record.annotations['__row_index__'] = str(row_index)
     return record
@@ -384,7 +391,7 @@ def create_data_table_from_blast_results(query: SeqRecord, blast_results: BlastR
                 uri = 'https://files.rcsb.org/download/%s.pdb' % parts[1]
             else:
                 uri = None
-                log.warn('Unable to extract PDB entry from Sequence id = {}'.format(hit.target_id))
+                log.warning('Unable to extract PDB entry from Sequence id = {}'.format(hit.target_id))
             log.info('Sequence id = {}, uri = {}'.format(hit.target_id, uri))
             table.data.append(
                 [align_str, hit.target_id, hit.target_def, hit.evalue, hit.score, hit.bits, query_seq_str, genbank_str,

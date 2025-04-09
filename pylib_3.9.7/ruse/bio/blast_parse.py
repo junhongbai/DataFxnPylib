@@ -22,6 +22,8 @@ from Bio.SeqUtils import nt_search
 from ruse.bio.bio_util import entrez_email, is_defined_sequence
 from ruse.bio.blast_search import BlastSearchType
 from ruse.bio.blast_utils import BlastRecords, retrieve_entrez_records, SequenceMatcher
+from ruse.util import log
+
 if TYPE_CHECKING:
     from ruse.bio.igblast_parse import IgHit
 from ruse.bio.sequence_align import copy_features_to_gapped_sequence
@@ -131,7 +133,7 @@ class BlastResult(Frozen):
             return acc
 
         # this should not happen for public data or databases derived from public data
-        print(
+        log.info(
             "Unable to find Entrez identifier in hit target id {} or definition {}".format(self.target_id,
                                                                                            self.target_def))
 
@@ -240,7 +242,7 @@ class MultipleBlastResults(Frozen):
 
         :param file: inout handle to blast results in XML format
         """
-        with open(file, 'r') as fh:
+        with open(file, 'r', encoding='utf8') as fh:
             for blast_record in NCBIXML.parse(fh):
                 results = BlastResults()
                 results.read_record(blast_record)
@@ -257,7 +259,7 @@ class MultipleBlastResults(Frozen):
         """Attempt to download all target sequences from Entrez"""
         target_ids = [hit.identifier() for results in self.query_hits for hit in results.hits if
                       hit.target_record is None]
-        db = 'Nucleotide' if self.search_type.database_type == 'nucl' else 'Protein'
+        db = 'nuccore' if self.search_type.database_type() == 'nucl' else 'Protein'
         records = retrieve_entrez_records(db, target_ids)
         record_map = {record.id: record for record in records}
         missing = False
@@ -268,7 +270,7 @@ class MultipleBlastResults(Frozen):
                     if target_id in record_map and is_defined_sequence(record_map[target_id].seq):
                         hit.target_record = record_map[target_id]
                     else:
-                        print("Failed to find matching record for hit {}".format(hit.target_id))
+                        log.info("Failed to find matching record for hit {}".format(hit.target_id))
                         missing = True
         if missing and retrieve_missing_locally:
             self.retrieve_local_targets()
@@ -290,7 +292,7 @@ class MultipleBlastResults(Frozen):
                     if hit.target_id in local_records.record_map:
                         hit.target_record = local_records.record_map[hit.target_id].record
                     else:
-                        print("Failed to find matching local record for hit {}".format(hit.target_id))
+                        log.info("Failed to find matching local record for hit {}".format(hit.target_id))
 
     def complement_target_sequence(self) -> None:
         """
@@ -349,7 +351,7 @@ class BlastResults(Frozen):
 
         :param file: file-like handle to blast search results in XML format
         """
-        with open(file, 'r') as fh:
+        with open(file, 'r', encoding='utf8') as fh:
             blast_record = NCBIXML.read(fh)
             self.read_record(blast_record)
 
@@ -399,9 +401,9 @@ class BlastResults(Frozen):
         """
         Retrieve from NCBI entrez genbank records for all targets
         """
-        db = 'Nucleotide' if self.search_type.database_type == 'nucl' else 'Protein'
+        db = 'nuccore' if self.search_type.database_type() == 'nucl' else 'protein'
         target_ids = [h.identifier() for h in self.hits]
-        target_ids = [t for t in target_ids if t is not None]
+        # target_ids = [t for t in target_ids if t is not None]
         records = retrieve_entrez_records(db, target_ids)
         record_map = {record.id: record for record in records}
         for hit in self.hits:
@@ -410,7 +412,7 @@ class BlastResults(Frozen):
                 if target_id in record_map:
                     hit.target_record = record_map[target_id]
                 else:
-                    print("Failed to find matching record for hit {}".format(hit.target_id))
+                    log.info("Failed to find matching record for hit {}".format(hit.target_id))
 
     def retrieve_local_targets(self) -> None:
         """
@@ -425,7 +427,7 @@ class BlastResults(Frozen):
             elif hit.target_id in local_records.record_map:
                 hit.target_record = local_records.record_map[hit.target_id].record
             else:
-                print("Failed to find matching record for hit {}".format(hit.target_id))
+               log.info("Failed to find matching record for hit {}".format(hit.target_id))
 
     def complement_target_sequence(self) -> None:
         """

@@ -83,7 +83,7 @@ def enzyme_cleavage_sites(sequences: List[SeqRecord], enzymes: Optional[List[str
     basename = str(uuid.uuid4())
     in_file = '{}_restrict_in.fasta'.format(basename)
     out_file = '{}_restrict_out.txt'.format(basename)
-    with open(in_file, 'w') as fh:
+    with open(in_file, 'w', encoding='utf8') as fh:
         SeqIO.write(sequences, fh, 'fasta')
 
     if enzymes:
@@ -96,7 +96,7 @@ def enzyme_cleavage_sites(sequences: List[SeqRecord], enzymes: Optional[List[str
     stdout, stderr = cline()
 
     out_sequences = []
-    with open(out_file, 'r') as fh:
+    with open(out_file, 'r', encoding='utf8') as fh:
         lines = fh.readlines()
         site_iter = deque((line_to_site(l) for l in lines))
         for in_seq in sequences:

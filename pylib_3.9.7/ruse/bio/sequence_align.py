@@ -94,7 +94,7 @@ class MultipleSequenceAlignment(Frozen):
         elif len(in_sequences) == 1:
             aligned_sequences = in_sequences
         else:
-            with open(in_file, 'w') as f:
+            with open(in_file, 'w', encoding='utf8') as f:
                 SeqIO.write(in_sequences, f, "fasta")
 
             if alignment_method == SequenceAlignmentMethod.CLUSTALO:

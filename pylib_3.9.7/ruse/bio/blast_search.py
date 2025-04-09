@@ -81,7 +81,7 @@ class BlastDatabase(Frozen):
 
         sequences = [SeqRecord(s.seq.ungap(), s.id, s.name, s.description) for s in sequences if ok_sequence(s)]
         fasta_file = "{}.fasta".format(str(uuid.uuid4()))
-        with open(fasta_file, 'w') as f:
+        with open(fasta_file, 'w', encoding='utf8') as f:
             SeqIO.write(sequences, f, "fasta")
 
         if type is None:
@@ -284,7 +284,7 @@ class BlastSearch(Frozen):
 
         fasta_file = "{}.fasta".format(search_name)
         blast_queries = [SeqRecord(q.seq.ungap(), q.id, q.name, q.description) for q in queries]
-        with open(fasta_file, 'w') as f:
+        with open(fasta_file, 'w', encoding='utf8') as f:
             SeqIO.write(blast_queries, f, "fasta")
         output_file = self.output_file()
 
@@ -525,7 +525,7 @@ class BlastWebSearch(Frozen):
 
         print("Performing web blast search {}".format(search_name))
         with NCBIWWW.qblast(**args) as rh:
-            with open(self.output_file(), 'w') as fh:
+            with open(self.output_file(), 'w', encoding='utf8') as fh:
                 record = rh.read()
                 fh.write(record)
 

@@ -68,7 +68,7 @@ def _available_databases() -> Optional[Dict[str, List[str]]]:
 
     databases = {'Protein': [], 'Nucleotide': []}
     matcher = re.compile(r"^([\w\_]+)\s+(\w+)")
-    with open(file, 'r') as fh:
+    with open(file, 'r', encoding='utf8') as fh:
         for line in fh.readlines():
             if not line.startswith('#'):
                 m = matcher.match(line)
@@ -126,7 +126,7 @@ def retrieve_sequences(usas: List[str], max_sequences: int = 10000, sequence_typ
     basename = str(uuid.uuid4())
     if len(usas) > 1:
         list_file = '{}_usa.list'.format(basename)
-        with open(list_file, 'w') as fh:
+        with open(list_file, 'w', encoding='utf8') as fh:
             fh.writelines(usa + '\n' for usa in usas)
         query = 'list:{}'.format(list_file)
         database = "unknown"
@@ -161,7 +161,7 @@ def retrieve_sequences(usas: List[str], max_sequences: int = 10000, sequence_typ
     if list_file:
         os.remove(list_file)
 
-    with open(out_file, 'r') as fh:
+    with open(out_file, 'r', encoding='utf8') as fh:
         swiss_fh = SwissIOWrapper(fh)
         seq_iter = itertools.islice(SeqIO.parse(swiss_fh, bio_format), max_sequences)
         sequences = list(seq_iter)

@@ -52,7 +52,7 @@ def _to_pairwise_alignment(query, align, target, local):
 def _write_in_file(basename: str, seqs: List[SeqRecord], ind: str) -> str:
     seqs = [SeqRecord(s.seq, id=s.id, name='', description='') for s in seqs]
     in_file = '{}_{}in.fasta'.format(basename, ind)
-    with open(in_file, 'w') as fh:
+    with open(in_file, 'w', encoding='utf8') as fh:
         SeqIO.write(seqs, fh, 'fasta')
     return in_file
 

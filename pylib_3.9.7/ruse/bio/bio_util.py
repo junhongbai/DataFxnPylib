@@ -8,8 +8,9 @@ Copyright (C) 2017-2022 Glysade, LLC
 A number of utility functions to augment Biopython functionality
 """
 
-import os
 from enum import Enum
+import os
+import re
 from typing import List, Optional
 
 from Bio.Seq import Seq, UndefinedSequenceError
@@ -17,7 +18,7 @@ from Bio import Entrez, SeqIO
 from Bio.SeqFeature import SeqFeature
 from Bio.SeqRecord import SeqRecord
 
-from ruse.util.data_table import ColumnInfo, ColumnDataType
+from ruse.util.data_table import ColumnDataType
 
 # IUPAC ambiguous RNA/DNA with gap
 DNA_ALPHABET = 'GATUCRYWSMKHBVDN-'
@@ -82,6 +83,9 @@ def entrez_email() -> str:
         raise ValueError("Environment variable ENTREZ_EMAIL not set.")
     else:
         return os.environ['ENTREZ_EMAIL']
+
+
+Entrez.email = entrez_email()
 
 
 def extract_feature(record: SeqRecord, feature_id: str = None, qualifier_name: str = None, qualifier_value: str = None,
@@ -157,7 +161,7 @@ def sequences_to_file(file: str, sequences: List[SeqRecord], format: str = 'fast
     :param sequences:
     :param format:
     """
-    with open(file, 'w') as fh:
+    with open(file, 'w', encoding='utf8') as fh:
         SeqIO.write(sequences, fh, format)
 
 
@@ -203,4 +207,27 @@ def is_defined_sequence(seq: Seq) -> bool:
     return True
 
 
-Entrez.email = entrez_email()
+def find_regex_matches(pattern: str, sequence: Seq) -> List[Optional[tuple[int, int]]]:
+    """
+    Find matches to the passed RegEx pattern in the passed sequence
+
+    :pattern: string containing a valid RegEx pattern
+    :sequence: BioPython Seq object - the target sequence to search
+    """
+
+    regex_pattern = re.compile(pattern)
+    pos = 0
+    matches = []
+    pos_ungapped_to_gapped = {}
+    for residue_index, residue in enumerate(str(sequence)):
+        if residue != '-':
+            pos_ungapped_to_gapped[pos] = residue_index
+            pos += 1
+
+    pos = 0
+    while (match := regex_pattern.search(str(sequence.ungap()), pos)) is not None:
+        pos = match.start() + 1
+        matches.append((pos_ungapped_to_gapped[match.start(len(match.regs) - 1)],
+                        pos_ungapped_to_gapped[match.end(len(match.regs) - 1)]))
+
+    return matches

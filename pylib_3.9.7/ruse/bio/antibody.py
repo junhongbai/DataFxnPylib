@@ -1,20 +1,30 @@
 import collections
+from dataclasses import dataclass
 from enum import Enum  # consider enum.StrEnum for Python >= 3.11
 import json
 import os
 import re
+import traceback
 import uuid
-from typing import List, NamedTuple, Optional, Dict, Final
+from typing import List, NamedTuple, Optional, Dict, Final, Tuple
 
+import numpy as np
+
+from Bio.PDB.Structure import Structure
+from Bio.Seq import Seq
 from Bio.SeqFeature import FeatureLocation, SeqFeature
 from Bio.SeqRecord import SeqRecord
 
+from df.data_transfer import Notification, NotificationLevel
+
+from df.df_util import euclidean_distance_matrix
+
 from ruse.bio.applications import AnarciCommandLine
+from ruse.bio.bio_data_table_helper import sequence_to_genbank_base64_str
 from ruse.bio.bio_util import sequences_to_file
 from ruse.bio.sequence_align import copy_features_to_gapped_sequence
 
 ANTIBODY_NUMBERING_COLUMN_PROPERTY: Final[str] = "antibodyNumbering"
-
 
 class AntibodyNumber(NamedTuple):
     domain: int
@@ -99,11 +109,16 @@ class CDRDefinitionScheme(Enum):
             KABAT
             CHOTHIA
             IMGT
+            IMGT_LEFRANC - added 24.03.11 to correspond with
+                        * Lefranc, Immunology Today 18, 509 (1997)
+                        * Lefranc, The Immunologist 7, 132-136 (1999)
+                        * Lefranc, et al. Dev. Comp. Immun. 27, 55-77 (2003)
     """
 
     KABAT = 'kabat'
     CHOTHIA  = 'chothia'
     IMGT = 'imgt'
+    IMGT_LEFRANC = 'imgt_lefranc'
 
     @classmethod
     def from_str(cls, scheme: str):
@@ -305,7 +320,7 @@ def _create_antibody_mappings(sequences: List[SeqRecord], numbering_scheme: Numb
                                     restrict='ig')
         stdout, stderr = command()
 
-        with open(out_file) as fh:
+        with open(out_file, encoding='utf8') as fh:
             lines = fh.readlines()
 
         for file in [in_file, out_file]:
@@ -401,6 +416,15 @@ def _find_regions(mapping: List[AntibodyNumber], numbering_scheme: NumberingSche
     # see CDR definitions in http://www.bioinf.org.uk/abs/info.html#cdrdef
     # This table is a little unclear as the end of H1 is not specified if the numbering is neither Kabat or Chothia
     # I have assumed that we use Chothia for everything except Kabat
+    ###############
+    # 23.03.11
+    # IMGT_LEFRANC was added to correspond to cdr definitions in
+    #  * Lefranc, Immunology Today 18, 509(1997)
+    #  * Lefranc, The Immunologist 7, 132 - 136(1999)
+    #  * Lefranc, et al.Dev.Comp.Immun. 27, 55 - 77(2003)
+    # Lefranc CDR definitions are consistent with The Antibody Prediction Toolbox
+    # at https://opig.stats.ox.ac.uk/webapps/sabdab-sabpred/sabpred and various tools from Charlotte Deane's lab.
+    ###############
 
     # numbering_scheme numbers residues
     # cdr_definition assigns regions
@@ -408,7 +432,8 @@ def _find_regions(mapping: List[AntibodyNumber], numbering_scheme: NumberingSche
     # the Wolfguy numbering is not supported
     assert numbering_scheme in [NumberingScheme.CHOTHIA, NumberingScheme.KABAT, NumberingScheme.IMGT,
                                 NumberingScheme.MARTIN, NumberingScheme.AHO]
-    assert cdr_definition in [CDRDefinitionScheme.CHOTHIA, CDRDefinitionScheme.KABAT, CDRDefinitionScheme.IMGT]
+    assert cdr_definition in [CDRDefinitionScheme.CHOTHIA, CDRDefinitionScheme.KABAT, CDRDefinitionScheme.IMGT,
+                              CDRDefinitionScheme.IMGT_LEFRANC]
     regions = list()
 
     if cdr_definition == CDRDefinitionScheme.KABAT:
@@ -460,6 +485,37 @@ def _find_regions(mapping: List[AntibodyNumber], numbering_scheme: NumberingSche
         r = _find_chain_regions(mapping, 'H', 'H26', h1_end, 'H51', 'H56', 'H93', 'H102')
         regions.append(r)
 
+    elif cdr_definition == CDRDefinitionScheme.IMGT_LEFRANC:
+
+        # mapping of numbering schemes to IMGT_LEFRANC CDR definitions based on
+        # Dondelinger, et al. Front. Immunol. 9 (2018).
+        if numbering_scheme == NumberingScheme.KABAT:
+            r = _find_chain_regions(mapping, 'L', 'L27', 'L32', 'L50', 'L52', 'L89', 'L97')
+            regions.append(r)
+            r = _find_chain_regions(mapping, 'H', 'H26', 'H35B', 'H51', 'H57', 'H93', 'H102')
+            regions.append(r)
+        elif numbering_scheme == NumberingScheme.CHOTHIA:
+            r = _find_chain_regions(mapping, 'L', 'L27', 'L32', 'L50', 'L52', 'L89', 'L97')
+            regions.append(r)
+            r = _find_chain_regions(mapping, 'H', 'H26', 'H33', 'H51', 'H57', 'H93', 'H102')
+            regions.append(r)
+        elif numbering_scheme == NumberingScheme.MARTIN:
+            r = _find_chain_regions(mapping, 'L', 'L27', 'L32', 'L50', 'L52E', 'L89', 'L97')
+            regions.append(r)
+            r = _find_chain_regions(mapping, 'H', 'H26', 'H33', 'H51', 'H57', 'H93', 'H102')
+            regions.append(r)
+        elif numbering_scheme == NumberingScheme.AHO:
+            r = _find_chain_regions(mapping, 'L', 'L27', 'L40', 'L58', 'L67', 'L107', 'L138')
+            regions.append(r)
+            r = _find_chain_regions(mapping, 'H', 'H27', 'H40', 'H58', 'H67', 'H107', 'H138')
+            regions.append(r)
+        elif numbering_scheme == NumberingScheme.IMGT:
+            r = _find_chain_regions(mapping, 'L', 'L27', 'L38', 'L56', 'L65', 'L105', 'L117')
+            regions.append(r)
+            r = _find_chain_regions(mapping, 'H', 'H27', 'H38', 'H56', 'H65', 'H105', 'H117')
+            regions.append(r)
+        else:
+            raise ValueError()
     else:
         raise ValueError()
 
@@ -662,3 +718,641 @@ def _find_antibody_number(mapping: List[AntibodyNumber], chain: str, position: O
             else:
                 last_match = match
     return last_match
+
+class Antibody():
+    """
+    Class to contain antibody characteristics and functionalities
+    Originally developed for Antibody Developability Metrics Data Function
+    """
+
+    # Original hydropathy values from Kyte, Doolittle. JMolBio 157:105(1982) (shown in comments)
+    # Normalized to [1,2] as described in Raybould, et al. PNAS 116(10):2019
+    Raybould_Hydropathy = {'ALA': 1.70,  # 1.80
+                           'CYS': 1.78,  # 2.50
+                           'ASP': 1.11,  # -3.50
+                           'GLU': 1.11,  # -3.50
+                           'PHE': 1.81,  # 2.80
+                           'GLY': 1.46,  # -0.40
+                           'HIS': 1.14,  # -3.20
+                           'ILE': 2.00,  # 4.50
+                           'LYS': 1.07,  # -3.90
+                           'LEU': 1.92,  # 3.80
+                           'MET': 1.71,  # 1.90
+                           'ASN': 1.11,  # -3.50
+                           'PRO': 1.32,  # -1.60
+                           'GLN': 1.11,  # -3.50
+                           'ARG': 1.00,  # -4.50
+                           'SER': 1.41,  # -0.80
+                           'THR': 1.42,  # -0.70
+                           'VAL': 1.97,  # 4.20
+                           'TRP': 1.40,  # -0.90
+                           'TYR': 1.36}  # -1.30
+
+    # Raybould, et al., PNAS 116(10):2019.
+    Raybould_Charge = {'ALA': 0.0,
+                       'CYS': 0.0,
+                       'ASP': -1.0,
+                       'GLU': -1.0,
+                       'PHE': 0.0,
+                       'GLY': 0.0,
+                       'HIS': 0.1,
+                       'ILE': 0.0,
+                       'LYS': 1.0,
+                       'LEU': 0.0,
+                       'MET': 0.0,
+                       'ASN': 0.0,
+                       'PRO': 0.0,
+                       'GLN': 0.0,
+                       'ARG': 1.0,
+                       'SER': 0.0,
+                       'THR': 0.0,
+                       'VAL': 0.0,
+                       'TRP': 0.0,
+                       'TYR': 0.0}
+
+    def __init__(self, record: SeqRecord, structure: Structure) -> None:
+
+        self.record = record
+        self.structure = structure
+
+        # CDR vicinity related data
+        self.cdr_vicinity_residues = None
+        self.cdr_viinity_distances = None
+
+        # dictionary to translated residue numbering to residue identity
+        self.numbering_residue_dict = None
+
+        # surface exposure
+        self.residue_rasa = {}
+
+        # salt bridges
+        self.salt_bridges = None
+        self.salt_bridge_residues = {'ARG': {'atoms': ['NE', 'NH1', 'NH2'],
+                                             'cognates': ['ASP', 'GLU']},
+                                     'ASP': {'atoms': ['OD1', 'OD2'],
+                                             'cognates': ['ARG', 'LYS']},
+                                     'GLU': {'atoms': ['OE1', 'OE2'],
+                                             'cognates': ['ARG', 'LYS']},
+                                     'LYS': {'atoms': ['NZ'],
+                                             'cognates': ['ASP', 'GLU']}}
+
+    def _find_salt_bridges(self) -> None:
+        """
+        Identify salt bridges in the antibody structure.
+
+        Only ASP, GLU, ARG, and LYS are considered with terminal amines of ARG/LYS, intra-chain
+        amine of ARG, and the acid oxygens of ASP/GLU.  If an amine and oxygen between two residues
+        are within 3.2 Angstroms, it is considered a salt bridge.
+
+        Uses class member salt_bridges dictionary to store identified salt bridges.
+        Dictionary is keyed by the residue ID, with value equal to the residue id of the
+        salt bridge partner residue, and None for no salt bridge
+        """
+
+        # store all residue ids and whether they are in a salt bridge or not
+        self.salt_bridges = {}
+
+        # storage for residue coordinates and atom origin mapping
+        arg_lys_xyz = []
+        arg_lys_map = []
+        asp_glu_xyz = []
+        asp_glu_map = []
+
+        # parse the structure and capture residues that can participate in salt bridges
+        for residue in self.structure.get_residues():
+            residue_name = residue.get_resname()
+            residue_id = \
+                f'{residue.get_full_id()[2]}{str(residue.get_full_id()[3][1])}{residue.get_full_id()[3][2].strip()}'
+
+            if residue_name not in self.salt_bridge_residues:
+                self.salt_bridges[residue_id] = None
+                continue
+
+            xyz = []
+            for atom in residue.get_atoms():
+                if atom.get_id() in self.salt_bridge_residues[residue_name]['atoms']:
+                    xyz.append(atom.get_coord())
+
+            if residue_name in ['ARG', 'LYS']:
+                arg_lys_xyz.extend(xyz)
+                arg_lys_map.extend([residue_id] * len(xyz))
+            else:
+                asp_glu_xyz.extend(xyz)
+                asp_glu_map.extend([residue_id] * len(xyz))
+
+        atom_distances = euclidean_distance_matrix(np.array(arg_lys_xyz), np.array(asp_glu_xyz))
+        bridge_atom_indices = np.nonzero(atom_distances <= 3.2)
+        bridge_atom_pairs = set([(arg_lys_map[rk_idx], asp_glu_map[de_idx])
+                                 for rk_idx, de_idx in zip(bridge_atom_indices[0], bridge_atom_indices[1])])
+
+        for pair in bridge_atom_pairs:
+            self.salt_bridges[pair[0]] = pair[1]
+            self.salt_bridges[pair[1]] = pair[0]
+
+        for residue_id in set(arg_lys_map + asp_glu_map):
+            if residue_id not in self.salt_bridges:
+                self.salt_bridges[residue_id] = None
+
+        return
+
+    def _is_salt_bridge(self, query_residue_id: str) -> bool:
+        """
+        Checks whether the passed residue is in a salt bridge.
+
+        :param query_residue_id: str, residue ID of interest from the antibody structure
+        :return: boolean, True if residue is in a salt-bridge, False if not
+        """
+
+        if self.salt_bridges is None:
+            self._find_salt_bridges()
+
+        if query_residue_id not in self.salt_bridges:
+            raise ValueError()
+
+        return self.salt_bridges[query_residue_id] is not None
+
+    def _extract_residue_rasa(self) -> None:
+        """
+        Extract the RASA values for residues in the antibody record into the member dictionary self.residue_rasa
+        Assumes internal SeqRecord contains calculated RASA values.
+        """
+
+        for feature in self.record.features:
+            if feature.type == 'misc_feature':
+                residue_id = feature.qualifiers['feature_name'][0]
+                residue = feature.extract(self.record)
+                for residue_feature in residue.features:
+                    if residue_feature.qualifiers['feature_name'][0] == 'Relative Accessible Surface Area':
+                        rasa = float(residue_feature.qualifiers['note'][2].split(' ')[1][:-1])
+                        self.residue_rasa[residue_id] = rasa
+
+        return
+
+    def get_exposed_residues(self) -> List[Optional[int]]:
+        """
+        Get the index numbers of residues marked as exposed
+
+        :return: list of integers referring to the exposed residue locations in the sequence
+        """
+
+        exposed_residues = []
+
+        for feature in self.record.features:
+            if 'note' in feature.qualifiers and \
+               len(feature.qualifiers['note']) == 6 and \
+               'RASA_exposed' in feature.qualifiers['note'][1]:
+
+                exposed_residues.append(int(feature.location.start))
+
+        return exposed_residues
+
+    def _get_residue_rasa(self, query_residue_id: str) -> float:
+        """
+        Returns the Relative Accessible Surface Area of the passed residue
+
+        :param query_residue_id: str, residue ID of interest from the antibody structure
+        :return: float, the RASA value for the passed residue
+        """
+
+        if len(self.residue_rasa) == 0:
+            self._extract_residue_rasa()
+
+        return self.residue_rasa[query_residue_id]
+
+    def create_numbering_residue_dict(self) -> List[Optional[Notification]]:
+        """
+        Creates a dictionary with keys being the antibody numbering reisdue ID
+        and values the residue type (e.g., ALA, GLY, etc.)
+
+        :return: list of notifications, if any
+        """
+
+        notifications = []
+
+        try:
+            self.numbering_residue_dict = dict(
+                zip([f'{residue.get_full_id()[2]}{residue.get_full_id()[3][1]}{residue.get_full_id()[3][2].strip()}'
+                     for residue in self.structure.get_residues()],
+                [residue.get_resname() for residue in self.structure.get_residues()]))
+        except Exception as ex:
+            notifications.append(Notification(level=NotificationLevel.ERROR,
+                                              title=f'Create Numbering_Residue Dictionary',
+                                              summary=f'An unexpected error occurred\n{ex.__class__} - {ex}',
+                                              details=f'{traceback.format_exc()}'))
+
+        return notifications
+
+
+    def compute_CDR_lengths(self) -> Tuple[dict, List[Optional[Notification]]]:
+        """
+        Computes the lengths of CDR annotated regions of the passed sequence
+
+        :return: a dictionary of CDR lengths
+        """
+
+        CDR_lengths = {'CDR-H1': 0, 'CDR-H2': 0, 'CDR-H3': 0,
+                       'CDR-L1': 0, 'CDR-L2': 0, 'CDR-L3': 0}
+        notifications = []
+
+        try:
+            for feature in self.record.features:
+                if feature.type == 'region':
+                    if feature.qualifiers['region_name'][0] in CDR_lengths:
+                        CDR_lengths[feature.qualifiers['region_name'][0]] = (
+                            len(str(feature.location.extract(self.record).seq).replace('-', '')))
+        except Exception as ex:
+            notifications.append(Notification(level=NotificationLevel.ERROR,
+                                              title=f'Compute CDR Lengths - Sequence Record ID {self.record.id}',
+                                              summary=f'An unexpected error occurred\n{ex.__class__} - {ex}',
+                                              details=f'{traceback.format_exc()}'))
+
+        return (CDR_lengths, notifications)
+
+
+    def compute_CDR_vicinity(self) -> List[Optional[Notification]]:
+        """
+        Identify CDR residues that are >= 7.5% RASA, and all other exposed residues within 4.0 Ang
+        From Raybould, et al., PNAS 116(10):2019.
+
+        :return: list of notifications, if any
+        """
+
+        notifications = []
+        exposed_cdr_residues = []
+        exposed_noncdr_residues = []
+        cdr_vicinity_residues = None
+        full_residue_distance_matrix = None
+
+        try:
+            for feature in self.record.features:
+                if feature.type == 'region':
+                    # partition into CDR and non-CDR residues
+                    if feature.qualifiers['region_name'][0] in ['CDR-H1', 'CDR-H2', 'CDR-H3',
+                                                                'CDR-L1', 'CDR-L2', 'CDR-L3']:
+                        target_list = exposed_cdr_residues
+                    else:
+                        target_list = exposed_noncdr_residues
+
+                    # find residues with RASA >= 7.5%
+                    cdr = feature.extract(self.record)
+                    for cdr_feature in cdr.features:
+                        if cdr_feature.type == 'misc_feature':
+                            if 'antibody_number' in cdr_feature.qualifiers['note'][0]:
+                                residue_number = cdr_feature.qualifiers['feature_name'][0]
+                                residue = cdr_feature.extract(cdr)
+                                for residue_feature in residue.features:
+                                    if residue_feature.qualifiers['feature_name'][0] == 'Relative Accessible Surface Area':
+                                        rasa = float(residue_feature.qualifiers['note'][2].split(' ')[1][:-1])
+                                        if rasa >= 7.5:
+                                            target_list.append(residue_number)
+
+                elif feature.type == 'misc_feature':
+                    # find exposed anchor residues
+                    # anchor residues defined for IMGT Lefranc numbering
+                    # https://www.imgt.org/IMGTScientificChart/Nomenclature/IMGT-FRCDRdefinition.html
+                    # Lefranc, M.-P., The Immunologist, 7, 132-136 (1999).
+                    if feature.qualifiers['feature_name'][0] in ['H26', 'H39', 'H55', 'H66', 'H104', 'H118',
+                                                                 'L26', 'L39', 'L55', 'L66', 'L104', 'L118']:
+                        residue_number = feature.qualifiers['feature_name'][0]
+                        anchor = feature.extract(self.record)
+                        for anchor_feature in anchor.features:
+                            if anchor_feature.qualifiers['feature_name'][0] == 'Relative Accessible Surface Area':
+                                rasa = float(anchor_feature.qualifiers['note'][2].split(' ')[1][:-1])
+                                if rasa >= 7.5:
+                                    exposed_cdr_residues.append(residue_number)  # add anchor residues to the cdr set
+
+            # CDR vicinity is then any other residue with RASA >= 7.5%
+            # and having a heavy atom within 4.0 Ang of a CDR residue
+            cdr_xyz = []
+            cdr_residue_id_map = []
+            noncdr_xyz = []
+            noncdr_residue_id_map = []
+
+            for residue in self.structure.get_residues():
+                residue_id = \
+                    f'{residue.get_full_id()[2]}{str(residue.get_full_id()[3][1])}{residue.get_full_id()[3][2].strip()}'
+                if residue_id in exposed_cdr_residues:
+                    new_coords = [atom.get_coord() for atom in residue.get_atoms() if 'H' not in atom.get_name()]
+                    cdr_xyz.extend(new_coords)
+                    cdr_residue_id_map.extend([residue_id] * len(new_coords))
+                elif residue_id in exposed_noncdr_residues:
+                    new_coords = [atom.get_coord() for atom in residue.get_atoms() if 'H' not in atom.get_name()]
+                    noncdr_xyz.extend(new_coords)
+                    noncdr_residue_id_map.extend([residue_id] * len(new_coords))
+
+            cdr_xyz = np.array(cdr_xyz)
+            noncdr_xyz = np.array(noncdr_xyz)
+
+            cdr_noncdr_distances = euclidean_distance_matrix(cdr_xyz, noncdr_xyz)
+            cdr_adjacent_residues = set([noncdr_residue_id_map[i]
+                                         for i, v in enumerate(np.min(cdr_noncdr_distances, axis=0)) if v <= 4.0])
+            cdr_vicinity_residues = sorted(exposed_cdr_residues + list(cdr_adjacent_residues))
+
+            # create a complete distance matrix for CDR vicinity residues
+            # and reduce it to the minimum distances between all pairs of residues
+
+            # cdr vs cdr
+            cdr_distances = euclidean_distance_matrix(cdr_xyz, cdr_xyz)
+
+            # reduce cdr vs non-cdr distances to only cdr vicinity
+            drop_residues = [i for i, v in enumerate(noncdr_residue_id_map) if v not in cdr_adjacent_residues]
+            cdr_noncdr_distances_reduced = np.delete(cdr_noncdr_distances, drop_residues, axis=1)
+            noncdr_residue_id_map_reduced = [v for v in noncdr_residue_id_map if v in cdr_vicinity_residues]
+
+            # reduce non-cdr xyz to cdr-vicinity and get distances
+            noncdr_xyz_reduced = np.delete(noncdr_xyz, drop_residues, axis=0)
+            noncdr_reduced_distances = euclidean_distance_matrix(noncdr_xyz_reduced, noncdr_xyz_reduced)
+
+            # build up complete atomic distance matrix
+            upper_distance_matrix = np.append(cdr_distances, cdr_noncdr_distances_reduced, axis=1)
+            lower_distance_matrix = np.append(np.transpose(cdr_noncdr_distances_reduced), noncdr_reduced_distances, axis=1)
+            full_distance_matrix = np.append(upper_distance_matrix, lower_distance_matrix, axis=0)
+            full_residue_id_map = cdr_residue_id_map + noncdr_residue_id_map_reduced
+
+            # reduce to residue distance matrix
+            # each entry (i, j) is the minimum distance between heavy atoms
+            # of residues i and j
+            full_residue_distance_matrix = np.zeros(shape=(len(cdr_vicinity_residues), len(cdr_vicinity_residues)))
+            for residue_index_i, residue_i in enumerate(cdr_vicinity_residues):
+                for residue_index_j, residue_j in enumerate(cdr_vicinity_residues):
+                    block_indices_i = [i for i, v in enumerate(full_residue_id_map) if v == residue_i]
+                    block_indices_j = [j for j, v in enumerate(full_residue_id_map) if v == residue_j]
+                    full_residue_distance_matrix[residue_index_i, residue_index_j] = \
+                        np.min(full_distance_matrix[block_indices_i[0]:block_indices_i[-1],
+                               block_indices_j[0]:block_indices_j[-1]])
+
+        except Exception as ex:
+            notifications.append(Notification(level=NotificationLevel.ERROR,
+                                              title=f'Compute CDR Vicinity - Sequence Record ID {self.record.id}',
+                                              summary=f'An unexpected error occurred\n{ex.__class__} - {ex}',
+                                              details=f'{traceback.format_exc()}'))
+
+        self.cdr_vicinity_residues = cdr_vicinity_residues
+        self.cdr_vicinity_distances = full_residue_distance_matrix
+
+        return notifications
+
+    def compute_PSH(self) -> (Tuple)[float, List[Optional[Notification]]]:
+        """
+        Computes the Patches of Surface Hydrophobicity metric from Raybould, et al., PNAS 116(10):2019.
+
+        :return: the PSH metric
+        """
+
+        notifications = []
+
+        if self.cdr_vicinity_residues is None or self.cdr_vicinity_distances is None:
+            vicinity_notifications = self.compute_CDR_vicinity()
+            notifications.extend(vicinity_notifications)
+
+        if self.numbering_residue_dict is None:
+            notifications.extend(self.create_numbering_residue_dict())
+
+        psh = 0
+
+        for i in range(self.cdr_vicinity_distances.shape[0] - 1):
+            for j in range(i + 1, self.cdr_vicinity_distances.shape[1]):
+                if self.cdr_vicinity_distances[i, j] < 7.5:
+                    residue_i = self.numbering_residue_dict[self.cdr_vicinity_residues[i]]
+                    if residue_i in self.salt_bridge_residues:
+                        if self._is_salt_bridge(self.cdr_vicinity_residues[i]):
+                            HRi = self.Raybould_Hydropathy['GLY']
+                        else:
+                            HRi = self.Raybould_Hydropathy[self.numbering_residue_dict[self.cdr_vicinity_residues[i]]]
+                    else:
+                        HRi = self.Raybould_Hydropathy[self.numbering_residue_dict[self.cdr_vicinity_residues[i]]]
+
+                    residue_j = self.numbering_residue_dict[self.cdr_vicinity_residues[j]]
+                    if residue_j in self.salt_bridge_residues:
+                        if self._is_salt_bridge(self.cdr_vicinity_residues[j]):
+                            HRj = self.Raybould_Hydropathy['GLY']
+                        else:
+                            HRj = self.Raybould_Hydropathy[self.numbering_residue_dict[self.cdr_vicinity_residues[j]]]
+                    else:
+                        HRj = self.Raybould_Hydropathy[self.numbering_residue_dict[self.cdr_vicinity_residues[j]]]
+
+                    psh += (HRi * HRj) / (self.cdr_vicinity_distances[i, j] ** 2)
+
+        # comparisons to TAP showed PSH values ~ 0.5 * TAP values
+        # I can only rationalize this as each pair of residues being
+        # counted twice, rather than just the half-matrix of non-redundant
+        # residue pairs
+        return 2.0 * psh, notifications
+
+    def compute_PPC(self) -> (Tuple)[float, List[Optional[Notification]]]:
+        """
+        Computes the Patches of Positive Charge metric from Raybould, et al., PNAS 116(10):2019.
+
+        :return: the PPC metric
+        """
+
+        notifications = []
+
+        if self.cdr_vicinity_residues is None or self.cdr_vicinity_distances is None:
+            vicinity_notifications = self.compute_CDR_vicinity()
+            notifications.extend(vicinity_notifications)
+
+        if self.numbering_residue_dict is None:
+            notifications.extend(self.create_numbering_residue_dict())
+
+        ppc = 0
+
+        for i in range(self.cdr_vicinity_distances.shape[0] - 1):
+            for j in range(i + 1, self.cdr_vicinity_distances.shape[1]):
+                if self.cdr_vicinity_distances[i, j] < 7.5:
+                    residue_i = self.numbering_residue_dict[self.cdr_vicinity_residues[i]]
+                    if residue_i in ['ARG', 'LYS', 'HIS']:
+                        # Raybbould, et al 2019 describes setting charge for any residue involved
+                        # in a salt-bridge to 0.  Comparison with online TAP tools
+                        # suggests that this is not done.
+                        # if self._is_salt_bridge(self.cdr_vicinity_residues[i]):
+                        #     continue
+                        # else:
+                            QRi = abs(self.Raybould_Charge[self.numbering_residue_dict[self.cdr_vicinity_residues[i]]])
+                    else:
+                        continue
+
+                    residue_j = self.numbering_residue_dict[self.cdr_vicinity_residues[j]]
+                    if residue_j in ['ARG', 'LYS', 'HIS']:
+                        # if self._is_salt_bridge(self.cdr_vicinity_residues[j]):
+                        #     continue
+                        # else:
+                            QRj = abs(self.Raybould_Charge[self.numbering_residue_dict[self.cdr_vicinity_residues[j]]])
+                    else:
+                        continue
+
+                    ppc += (QRi * QRj) / (self.cdr_vicinity_distances[i, j] ** 2)
+
+        # comparisons to TAP showed PPC values ~ 0.5 * TAP values
+        # (once salt-bridge check was disabled)
+        # I can only rationalize this as each pair of residues being
+        # counted twice, rather than just the half-matrix of non-redundant
+        # residue pairs
+        return 2.0 * ppc, notifications
+
+    def compute_PNC(self) -> (Tuple)[float, List[Optional[Notification]]]:
+        """
+        Computes the Patches of Negative Charge metric from Raybould, et al., PNAS 116(10):2019.
+
+        :return: the PNC metric
+        """
+
+        notifications = []
+
+        if self.cdr_vicinity_residues is None or self.cdr_vicinity_distances is None:
+            vicinity_notifications = self.compute_CDR_vicinity()
+            notifications.extend(vicinity_notifications)
+
+        if self.numbering_residue_dict is None:
+            notifications.extend(self.create_numbering_residue_dict())
+
+        pnc = 0
+
+        for i in range(self.cdr_vicinity_distances.shape[0] - 1):
+            for j in range(i + 1, self.cdr_vicinity_distances.shape[1]):
+                if self.cdr_vicinity_distances[i, j] < 7.5:
+                    residue_i = self.numbering_residue_dict[self.cdr_vicinity_residues[i]]
+                    if residue_i in ['ASP', 'GLU']:
+                        # Raybbould, et al 2019 describes setting charge for any residue involved
+                        # in a salt-bridge to 0.  Comparison with online TAP tools
+                        # suggests that this is not done.
+                        # if self._is_salt_bridge(self.cdr_vicinity_residues[i]):
+                        #     continue
+                        # else:
+                            QRi = abs(self.Raybould_Charge[self.numbering_residue_dict[self.cdr_vicinity_residues[i]]])
+                    else:
+                        continue
+
+                    residue_j = self.numbering_residue_dict[self.cdr_vicinity_residues[j]]
+                    if residue_j in ['ASP', 'GLU']:
+                        # if self._is_salt_bridge(self.cdr_vicinity_residues[j]):
+                        #     continue
+                        # else:
+                            QRj = abs(self.Raybould_Charge[self.numbering_residue_dict[self.cdr_vicinity_residues[j]]])
+                    else:
+                        continue
+
+                    pnc += (QRi * QRj) / (self.cdr_vicinity_distances[i, j] ** 2)
+
+        # comparisons to TAP showed PNC values ~ 0.5 * TAP values
+        # (once salt-bridge check was disabled)
+        # I can only rationalize this as each pair of residues being
+        # counted twice, rather than just the half-matrix of non-redundant
+        # residue pairs
+        return 2.0 * pnc, notifications
+
+    def compute_SFvCSP(self) -> (Tuple)[float, List[Optional[Notification]]]:
+        """
+        Computes the Structural Fv Charge Symmetry Parameter metric from Raybould, et al., PNAS 116(10):2019.
+
+        :return: the SFvCSP metric
+        """
+
+        notifications = []
+
+        if self.numbering_residue_dict is None:
+            notifications.extend(self.create_numbering_residue_dict())
+
+        Qsum_H = 0  # sum of heavy chain charges
+        Qsum_L = 0  # sum of light chain charges
+
+        for res_id, res_name in self.numbering_residue_dict.items():
+            try:
+                if self._get_residue_rasa(res_id) >= 7.5:
+                    if res_id.startswith('H'):
+                        Qsum_H += self.Raybould_Charge[res_name]
+                    elif res_id.startswith('L'):
+                        Qsum_L += self.Raybould_Charge[res_name]
+                    else:
+                        notifications.append(Notification(level=NotificationLevel.ERROR,
+                                                          title=f'Compute Charge Symmetry {self.record.id}',
+                                                          summary='Expected chain ID not found.',
+                                                          details='Antibody structures are expected to have two chains - ' +
+                                                                  'H (heavy) and L (light) chain. ' +
+                                                                  'One or both are missing.'))
+                        Qsum_H = None
+                        Qsum_L = None
+                        break
+            except KeyError:
+                notifications.append(Notification(level=NotificationLevel.WARNING,
+                                                  title=f'Compute Charge Symmetry {self.record.id}',
+                                                  summary='Structure - sequence mismatch.',
+                                                  details='The paired antibody structure and sequence are mismatched. ' +
+                                                           'Ensure that the antibody sequence column is that generated ' +
+                                                           'by the Antibody Prediction data function.  Mismatched ' +
+                                                           'structure and sequence will result in inaccurate metrics.'))
+
+        if Qsum_H is None or Qsum_L is None:
+            SFvCSP = None
+        else:
+            SFvCSP = Qsum_H * Qsum_L
+
+        return float(SFvCSP), notifications
+
+
+@dataclass
+class AntibodySequencePair:
+    H: str
+    L: str
+
+
+def extract_ABB2_numbering(ab_numberings: list[dict], ab_sequence_pairs: list[AntibodySequencePair]) \
+        -> Tuple[list[str], dict[ANTIBODY_NUMBERING_COLUMN_PROPERTY, str]]:
+    """
+    Convert the ABodyBuilder 2 numbers to an internal mapping representation
+    that can be used for processing numbering information
+
+    :param ab_numberings: a list containing the dictionary of chain numberings
+                          which is the .numbered_sequences element of a predicted
+                          antibody structure from ABodyBuilder 2
+    :param ab_sequence_pairs:  list of AntibodySequencePairs for antibody sequences corresponding
+                               to ab_numberings - expected to have names 'H' and 'L' corresponding to
+                               Heavy and Light chain sequences, resp.
+    :return:  A tuple consisting of:
+                a list of base64 encoded GenBank records as strings
+                a dictionary with keys as ANTIBODY_NUMBERING_COLUMN_PROPERTY and
+                    values being a string of the column property JSON
+    """
+
+    mappings = []
+    for sequences, numbering in zip(ab_sequence_pairs, ab_numberings):
+        mapping = []
+        for domain_idx, chain in enumerate(['H', 'L']):
+            domain = numbering[chain]
+            numbers = []
+            last_position = 0
+            for residue_idx, residue in enumerate(domain):
+                position = residue[0][0]
+                if position != last_position and position != last_position + 1:
+                    for gap_position in range(last_position + 1, position):
+                        numbers.append(AntibodyNumberMapping(domain=domain_idx + 1, chain=chain,
+                                                             position=gap_position, insertion=None,
+                                                             residue='-', query_position=None))
+                insertion = residue[0][1].strip()
+                if not insertion:
+                    insertion = None
+                numbers.append(AntibodyNumberMapping(domain = domain_idx + 1, chain = chain,
+                                                     position = residue[0][0], insertion = insertion,
+                                                     residue = residue[1], query_position = None))
+                last_position = position
+
+            mapping.append(AnarciDomain(sequence_start = 0, sequence_end = len(sequences.__dict__[chain]) - 1,
+                                        numbers = numbers))
+
+        mappings.append(mapping)
+
+    ab_sequences = [SeqRecord(Seq(seq_pair.H + seq_pair.L)) for seq_pair in ab_sequence_pairs]
+
+    mappings2 = [_match_to_sequence(s, m) for s, m in zip(ab_sequences, mappings)]
+    for mapping, sequence in zip(mappings2, ab_sequences):
+        _annotate_sequence(sequence, mapping, NumberingScheme.IMGT, CDRDefinitionScheme.IMGT_LEFRANC)
+    align_information = _do_align_antibody_sequences(ab_sequences, mappings2,
+                                                     NumberingScheme.IMGT, CDRDefinitionScheme.IMGT_LEFRANC)
+
+    output_sequences = align_information.aligned_sequences
+    numbering_json = align_information.to_column_json()
+
+    rows = [sequence_to_genbank_base64_str(s) for s in output_sequences]
+    properties = {ANTIBODY_NUMBERING_COLUMN_PROPERTY: numbering_json}
+
+    return rows, properties

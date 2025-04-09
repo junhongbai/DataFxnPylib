@@ -175,7 +175,7 @@ class BlastRecords(Frozen):
         file_id = str(uuid.uuid4())
         file_in = "{}_in.txt".format(file_id)
         file_out = "{}_out.fasta".format(file_id)
-        with open(file_in, 'w') as fh:
+        with open(file_in, 'w', encoding='utf8') as fh:
             for id in ids:
                 fh.write("{}\n".format(id))
 
@@ -187,7 +187,7 @@ class BlastRecords(Frozen):
             self.error = "Blastdbcmd error {}".format(ex)
             return
         else:
-            with open(file_out) as fh:
+            with open(file_out, encoding='utf8') as fh:
                 sequences = list(SeqIO.parse(fh, 'fasta'))
         finally:
             os.remove(file_out)
