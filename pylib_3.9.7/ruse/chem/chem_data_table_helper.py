@@ -24,6 +24,7 @@ from typing import Iterable, List
 
 from ruse.rdkit.rdkit_utils import type_to_format, mol_to_string, string_to_mol, is_three_dimensional
 from ruse.rdkit.rgroup import Rgroup, RgroupDecomposer
+from ruse.util import log
 from ruse.util.data_table import DataTable
 
 
@@ -139,7 +140,7 @@ def data_table_column_to_mols(data_table: DataTable, column_index: int, include_
                 mol.SetIntProp("RowIdx", row_idx)
                 yield mol
             else:
-                print("Failed to convert {} content type {} to mol!".format(mol_string, content_type))
+                log.warning("Failed to convert {} content type {} to mol!".format(mol_string, content_type))
                 if include_empty:
                     yield None
         elif include_empty:
