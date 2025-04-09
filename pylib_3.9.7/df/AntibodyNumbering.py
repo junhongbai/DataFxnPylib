@@ -14,10 +14,10 @@ class AntibodyNumbering(DataFunction):
         input_column.remove_nulls()
         input_sequences = column_to_sequences(input_column)
 
-        numbering_scheme = string_input_field(request, 'numberingScheme', NumberingScheme.CHOTHIA)
+        numbering_scheme = string_input_field(request, 'numberingScheme', str(NumberingScheme.CHOTHIA))
         numbering_scheme = NumberingScheme.from_str(numbering_scheme)
 
-        cdr_definition = string_input_field(request, 'cdrDefinition', NumberingScheme.CHOTHIA)
+        cdr_definition = string_input_field(request, 'cdrDefinition', str(NumberingScheme.CHOTHIA))
         cdr_definition = CDRDefinitionScheme.from_str(cdr_definition)
 
         if not cdr_definition:

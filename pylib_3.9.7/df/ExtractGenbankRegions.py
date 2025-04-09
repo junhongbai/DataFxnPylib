@@ -27,10 +27,12 @@ def _feature_to_name(feature: SeqFeature, feature_key: str, feature_qualifier: s
 
 def _extract_region(sequence: Optional[SeqRecord], feature_key: str, feature_qualifier: str, name: str) \
         -> [Optional[Seq]]:
+
     if not sequence:
         return None
 
     feature_sequences = []
+
     feature: SeqFeature
     for feature in sequence.features:
         feature_name = _feature_to_name(feature, feature_key, feature_qualifier)
@@ -40,16 +42,15 @@ def _extract_region(sequence: Optional[SeqRecord], feature_key: str, feature_qua
 
         if feature_name == name:
             try:
-                seq = feature.extract(sequence.seq)
+                # seq = feature.extract(sequence.seq)
+                seq = sequence[feature.location.start:feature.location.end]
             except Exception as ex:
-                # need to create a notification here
                 continue
 
-            # return SeqRecord(seq, name)
-            feature_sequences.append(SeqRecord(seq, name, features = [feature]))
+            # feature_sequences.append(seq, name, features = [feature]))
+            feature_sequences.append(seq)
 
     return feature_sequences
-    # return None
 
 
 class ExtractGenbankRegions(DataFunction):
@@ -79,6 +80,8 @@ class ExtractGenbankRegions(DataFunction):
         feature_key = string_input_field(request, 'featureKey')
         feature_qualifier = string_input_field(request, 'featureQualifier')
 
+        output_type = string_input_field(request, 'uiOutputOption')
+
         # first find all regions - dict preserves order
         region_names_dict: Dict[str] = {}
         for sequence, sequence_id in zip(input_sequences, sequence_ids_no_nulls):
@@ -94,21 +97,27 @@ class ExtractGenbankRegions(DataFunction):
 
         region_names = list(region_names_dict.keys())
         output_columns = []
-        feature_sequence_ids = []
+        response = DataFunctionResponse()
 
         for region_name in region_names:
             feature_sequences = [_extract_region(s, feature_key, feature_qualifier, region_name)
                                  for s in input_sequences]
             feature_sequence_ids = [i for i, seq in zip(sequence_ids_no_nulls, input_sequences) if seq]
 
-
             if feature_qualifier:
-                # verify handling of list of lists
-                output_column = sequences_to_column([feature_sequence[0] if len(feature_sequence) != 0 else None
-                                                     for feature_sequence in feature_sequences],
-                                        f'{input_column.name} {region_name}', False)
-                output_column.insert_nulls(input_column.missing_null_positions)
-                output_columns.append(output_column)
+                if output_type in ['OutputSequence', 'OutputBoth']:
+                    output_column = sequences_to_column([feature_sequence[0] if len(feature_sequence) != 0 else None
+                                                         for feature_sequence in feature_sequences],
+                                            f'{input_column.name} {region_name} - Sequence', False)
+                    output_column.insert_nulls(input_column.missing_null_positions)
+                    output_columns.append(output_column)
+
+                if output_type in ['OutputGenbank', 'OutputBoth']:
+                    output_column = sequences_to_column([feature_sequence[0] if len(feature_sequence) != 0 else None
+                                                         for feature_sequence in feature_sequences],
+                                                        f'{input_column.name} {region_name} - Genbank', True)
+                    output_column.insert_nulls(input_column.missing_null_positions)
+                    output_columns.append(output_column)
 
                 response = DataFunctionResponse(outputColumns = output_columns)
             else:
@@ -117,6 +126,7 @@ class ExtractGenbankRegions(DataFunction):
                 output_feature_descr = []
                 output_feature_start = []
                 output_feature_end = []
+
                 for feature_seqs, sequence_id in zip(feature_sequences, feature_sequence_ids):
                     output_feature_ids.extend([sequence_id] * len(feature_seqs))
                     output_feature_sequences.extend(feature_seqs)
@@ -126,23 +136,32 @@ class ExtractGenbankRegions(DataFunction):
                         output_feature_descr.append(qualifiers[0][0])
                         output_feature_start.append(feature_seq.features[0].location.start)
                         output_feature_end.append(feature_seq.features[0].location.end)
-                        # output_feature_start.extend([feature_seq.features[0].location.start for feature_seq in feature_seqs])
-                        # output_feature_end.extend([feature_seq.features[0].location.end for feature_seq in feature_seqs])
 
-                output_columns = [
-                                  ColumnData(name = sequence_id_column_name, dataType = DataType.STRING,
-                                             values = output_feature_ids),
-                                  sequences_to_column(output_feature_sequences, f'{input_column.name} {region_name}', False),
-                                  ColumnData(name = 'Description', dataType = DataType.STRING,
-                                             values = output_feature_descr),
-                                  ColumnData(name = 'Start', dataType = DataType.INTEGER,
-                                             values = output_feature_start),
-                                  ColumnData(name = 'end', dataType = DataType.INTEGER,
-                                             values = output_feature_end)
-                ]
+                output_columns.append(ColumnData(name=sequence_id_column_name, dataType=DataType.STRING,
+                                                 values=output_feature_ids))
+
+                if output_type in ['OutputSequence', 'OutputBoth']:
+                    output_columns.append(
+                        sequences_to_column(output_feature_sequences,
+                                            column_name = f'{input_column.name} {region_name} - Sequence',
+                                            genbank_output = False))
+
+                if output_type in ['OutputGenbank', 'OutputBoth']:
+                    output_columns.append(
+                        sequences_to_column(output_feature_sequences,
+                                            column_name = f'{input_column.name} {region_name} - Genbank',
+                                            genbank_output = True))
+
+                output_columns.extend([
+                    ColumnData(name = 'Description', dataType = DataType.STRING,
+                               values = output_feature_descr),
+                    ColumnData(name = 'Start (original sequence)', dataType = DataType.INTEGER,
+                               values = output_feature_start),
+                    ColumnData(name = 'End (original sequence)', dataType = DataType.INTEGER,
+                               values = output_feature_end)
+                ])
 
                 output_table = TableData(tableName = f'{input_column.name} {feature_key}', columns = output_columns)
-
                 response = DataFunctionResponse(outputTables = [output_table])
 
         return response

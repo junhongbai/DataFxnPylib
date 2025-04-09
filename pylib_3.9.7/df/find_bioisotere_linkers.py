@@ -24,6 +24,7 @@ from rdkit.Chem import rdDepictor
 from rdkit.Chem.Draw import rdMolDraw2D
 
 from df.int_range import IntRange
+from ruse.util import log
 
 
 class Bioisostere:
@@ -360,9 +361,9 @@ def summarise_series(series: list[dict]) -> None:
     max = len(series[0]['SMILES'])
     min = len(series[-1]['SMILES'])
     median = len(series[num_sers // 2]['SMILES'])
-    print(f'Number of series : {len(series)}  median size : {median}'
+    log.info(f'Number of series : {len(series)}  median size : {median}'
           f'  mean size : {mean_size:6.2f} max : {max} ({series[0]["assay"]})'
-          f'  min : {min}', flush=True)
+          f'  min : {min}')
     # for i, ser in enumerate(series[:20]):
     #     print(f'Series {i} size : {len(ser["SMILES"])}')
 
@@ -448,7 +449,7 @@ def find_bioisosteres_in_series(series: dict[str, Union[str, list[str]]],
             The list of biaisosteres
     """
     molecules = [(smi, name) for smi, name in zip(series['SMILES'], series['ChEMBLID'])]
-    print(f'Finding bioisosteres for {len(molecules)} molecules.', flush=True)
+    log.info(f'Finding bioisosteres for {len(molecules)} molecules.')
     linkers = fl.find_all_linkers(molecules, max_heavies=max_heavies,
                                   max_length=max_bonds)
     linker_smis = list(linkers.keys())
@@ -475,7 +476,7 @@ def write_series_json(series: list[dict[str, Union[str, list[str]]]], json_file:
     Write the series into the given JSON file. Returns bool on success.
     """
     try:
-        with open(json_file, 'w') as f:
+        with open(json_file, 'w', encoding='utf8') as f:
             f.write(json.dumps(series, indent=4))
             f.write('\n')
     except FileNotFoundError:
@@ -492,13 +493,13 @@ def read_series_json(json_file: str) -> Optional[list[dict[str, Union[str, list[
     found.
     """
     try:
-        with open(json_file, 'r') as f:
+        with open(json_file, 'r', encoding='utf8') as f:
             series = json.loads(f.read())
     except FileNotFoundError:
         print(f'ERROR : failed to read file {json_file}.')
         return None
 
-    print(f'Read {len(series)} series from {json_file}.', flush=True)
+    log.info(f'Read {len(series)} series from {json_file}.')
     return series
 
 
@@ -518,7 +519,7 @@ def extract_bioisosteres(series: list[dict[str, Union[str, list[str]]]],
     Returns:
 
     """
-    print(f'Extracting bioisosteres from {len(series)} series.', flush=True)
+    log.info(f'Extracting bioisosteres from {len(series)} series.')
 
     def merge_bioisosteres(new_bios, old_bios):
         if old_bios is None:
@@ -562,7 +563,7 @@ def extract_bioisosteres(series: list[dict[str, Union[str, list[str]]]],
 
 
 def start_html_file(html_file: str) -> IO:
-    htmlf = open(html_file, 'w')
+    htmlf = open(html_file, 'w', encoding='utf8')
 
     htmlf.write(f'''<!DOCTYPE html>
     <html lang="en">
@@ -688,7 +689,7 @@ def make_image(mol_smiles: str, image_dir: Union[str, Path],
                                     highlightAtoms=linker_atoms,
                                     highlightBonds=match_bonds)
     drawer.FinishDrawing()
-    with open(img_file, 'w') as f:
+    with open(img_file, 'w', encoding='utf8') as f:
         f.write(drawer.GetDrawingText())
 
     return img_file
@@ -833,7 +834,7 @@ def write_bioisosteres_db(bioisosteres: list[Bioisostere], db_file: str) -> None
 
 
 def main(cli_args):
-    print(f'Using RDKit version {rdBase.rdkitVersion}.')
+    log.info(f'Using RDKit version {rdBase.rdkitVersion}.')
 
     args = parse_args(cli_args)
     if args is None:
@@ -855,9 +856,9 @@ def main(cli_args):
                                         args.max_bonds, args.min_examples,
                                         args.num_procs)
 
-    print(f'Number of bioisosteres : {len(bioisosteres)}')
+    log.info(f'Number of bioisosteres : {len(bioisosteres)}')
     for bios in bioisosteres:
-        print(bios)
+        log.info(bios)
         # for ex in bios.examples:
         #     print(f'  {ex[0].name} {ex[0].mol_smiles} ::'
         #           f' {ex[1].name} {ex[1].mol_smiles}')

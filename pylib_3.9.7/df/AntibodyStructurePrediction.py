@@ -1,82 +1,70 @@
-import base64
 import os
-import gzip
 import traceback
-from typing import Optional
+from typing import Any, Optional, Union
 
-from Bio.SeqRecord import SeqRecord
-
-from df.bio_helper import column_to_sequences, string_to_sequence
+from df.bio_helper import column_to_sequences, structures_to_column
 from df.data_transfer import ColumnData, TableData, DataFunctionRequest, DataFunctionResponse, DataFunction, DataType, \
-                             string_input_field, boolean_input_field, input_field_to_column, \
-                             Notification, NotificationLevel
+    boolean_input_field, input_field_to_column, Notification, NotificationLevel
 
-from ruse.bio.antibody import align_antibody_sequences, NumberingScheme, CDRDefinitionScheme, ANTIBODY_NUMBERING_COLUMN_PROPERTY
-from ruse.bio.bio_data_table_helper import sequence_to_genbank_base64_str
+from ruse.bio.antibody import align_antibody_sequences, NumberingScheme, CDRDefinitionScheme, \
+    AntibodySequencePair, extract_ABB2_numbering
 
 from ImmuneBuilder import ABodyBuilder2
 from ImmuneBuilder.ABodyBuilder2 import header as ABB2_HEADER
 from ImmuneBuilder.refine import refine
 from ImmuneBuilder.util import add_errors_as_bfactors
 
+from Bio import SeqRecord
+
+
 class AntibodyStructurePrediction(DataFunction):
     """
     Predicts antibody structure from heavy and light chain sequences
     """
 
-    def _antibody_numbering(self, ab_sequences: list[Optional[SeqRecord]], num_scheme: NumberingScheme,
-                            cdr_def: CDRDefinitionScheme) -> (list[Optional[str]], dict):
+    @staticmethod
+    def run_AntibodyStructurePrediction(ab_sequences: list[SeqRecord],
+                                        ab_ids: list[Union[str, int]], save_all: bool = False) -> \
+            tuple[dict[str, Any], list[Optional[Notification]]]:
+        """
+        Predict antibody structure from sequence, and return data for output columns
 
-        if not cdr_def:
-            if num_scheme == NumberingScheme.IMGT:
-                cdr_def = CDRDefinitionScheme.IMGT
-            elif num_scheme == NumberingScheme.KABAT:
-                cdr_def = CDRDefinitionScheme.KABAT
-            else:
-                cdr_def = CDRDefinitionScheme.CHOTHIA
+        :param ab_sequences:  A list of BioPython SeqRecords containing an Antibody sequence.
+                              Expected to be Heavy Chain + Light Chain concatenated
+        :param ab_ids: A list of values to use for antibody IDs.  Typically either strings or integers.
+        :param save_all:  Boolean - if true, results for all 4 models will be saved,
+                                    if false, only one model result will be saved
+        :return:  A tuple consisting of:
+                     A dictionary with keys being strings with suggested column names and values of dictionaries.
+                     The values for this dictionary is another dictionary having two possible keys:
+                        'values' - containing the data values for the column
+                        'properties' - containing property values to be applied to the column
+        """
 
-        align_information = align_antibody_sequences(ab_sequences, num_scheme, cdr_def)
-        output_sequences = align_information.aligned_sequences
-        numbering_json = align_information.to_column_json()
-
-        rows = [sequence_to_genbank_base64_str(s) for s in output_sequences]
-        properties = {ANTIBODY_NUMBERING_COLUMN_PROPERTY: numbering_json}
-
-        return (rows, properties)
-
-    def execute(self, request: DataFunctionRequest) -> DataFunctionResponse:
-
-        sequence_column = input_field_to_column(request, 'uiAbSeqCol')
-        sequence_column.remove_nulls()
-        ab_sequences = column_to_sequences(sequence_column)
-
-        ab_ids = input_field_to_column(request, 'uiIDCol').values
-
-        save_all = boolean_input_field(request, 'uiSaveAll')
-        refine_all = boolean_input_field(request, 'uiRefineAll')
         if save_all:
             row_multiplier = 4
         else:
             row_multiplier = 1
 
-        do_numbering = boolean_input_field(request, 'uiDoNumbering')
-        num_scheme = string_input_field(request, 'uiNumberingScheme')
-        cdr_def = string_input_field(request, 'uiCDRdef')
-
         # create an ABodyBuilder2 structure predictor with the selected numbering scheme
-        predictor = ABodyBuilder2(numbering_scheme = num_scheme)
+        predictor = ABodyBuilder2(numbering_scheme='imgt')
 
         # new table columns
         ids = []
+
         model_number = []
         model_rank = []
+
         orig_seq = []
         HL_concat_seq = []
         heavy_chain_seq = []
         light_chain_seq = []
-        embedded_structures = []
+        pdb_strings = []
+        ABB2_numbering = []
 
         notifications = []
+        structure_prediction_notifications = {}
+        structure_saving_notifications = {}
 
         for ab_seq, ab_id in zip(ab_sequences, ab_ids):
             ids.extend([ab_id] * row_multiplier)
@@ -88,10 +76,7 @@ class AntibodyStructurePrediction(DataFunction):
             try:
                 antibody = predictor.predict(sequences)
             except Exception as ex:
-                notifications.append(Notification(level = NotificationLevel.ERROR,
-                                                  title = 'Antibody Structure Prediction',
-                                                  summary = f'Error for ID {ab_id}/n{ex.__class__} - {ex}',
-                                                  details = f'{traceback.format_exc()}'))
+                structure_prediction_notifications[ab_id] = (ex, f'{traceback.format_exc()}')
 
                 # remove list elements for this broken item
                 ids = ids[:-row_multiplier]
@@ -99,9 +84,12 @@ class AntibodyStructurePrediction(DataFunction):
 
                 continue
 
-            heavy_chain_seq.extend([''.join(residue[1] for residue in antibody.numbered_sequences['H'])] * row_multiplier)
-            light_chain_seq.extend([''.join(residue[1] for residue in antibody.numbered_sequences['L'])] * row_multiplier)
+            heavy_chain_seq.extend(
+                [''.join(residue[1] for residue in antibody.numbered_sequences['H'])] * row_multiplier)
+            light_chain_seq.extend(
+                [''.join(residue[1] for residue in antibody.numbered_sequences['L'])] * row_multiplier)
             HL_concat_seq.extend([''.join([heavy_chain_seq[-1], light_chain_seq[-1]])] * row_multiplier)
+            ABB2_numbering.extend([antibody.numbered_sequences] * row_multiplier)
 
             if save_all:
                 model_number.extend([idx + 1 for idx in range(row_multiplier)])
@@ -111,23 +99,17 @@ class AntibodyStructurePrediction(DataFunction):
                     pdb_filename = ''.join([ab_id, f'_Model_{model_idx}_Rank_{antibody.ranking.index(model_idx)}.pdb'])
                     error_caught = False
                     try:
-                        antibody.save_single_unrefined(pdb_filename, index = model_idx)
-                        if refine_all or antibody.ranking[model_idx] == 0:
-                            refine(pdb_filename, pdb_filename, check_for_strained_bonds = True, n_threads = -1)
+                        antibody.save_single_unrefined(pdb_filename, index=model_idx)
+                        refine(pdb_filename, pdb_filename, check_for_strained_bonds=True, n_threads=-1)
                         add_errors_as_bfactors(pdb_filename, antibody.error_estimates.mean(0).sqrt().cpu().numpy(),
-                                               header = [ABB2_HEADER])
+                                               header=[ABB2_HEADER])
 
-                        # open the file, compress, and encode it
+                        # # open the file, compress, and encode it
                         with open(pdb_filename, 'r', encoding='utf-8') as pdb_file:
                             pdb_data = pdb_file.read()
-                            pdb_zip = gzip.compress(pdb_data.encode())
-                            pdb_enc = base64.b64encode(pdb_zip).decode('utf8')
-                            embedded_structures.append(pdb_enc)
+                            pdb_strings.append(pdb_data)
                     except Exception as ex:
-                        notifications.append(Notification(level=NotificationLevel.ERROR,
-                                                          title='Antibody Structure Prediction',
-                                                          summary=f'Error saving ID {ab_id}, model #{model_idx}/n{ex.__class__} - {ex}',
-                                                          details=f'{traceback.format_exc()}'))
+                        structure_prediction_notifications[ab_id] = (ex, f'{traceback.format_exc()}')
 
                         # remove list elements for this broken item
                         ids = ids[:-row_multiplier]
@@ -148,19 +130,15 @@ class AntibodyStructurePrediction(DataFunction):
                 pdb_filename = '_'.join([ab_id, 'predicted.pdb'])
                 error_caught = False
                 try:
-                    antibody.save(pdb_filename)
+                    antibody.save_single_unrefined(pdb_filename)
+                    refine(pdb_filename, pdb_filename, check_for_strained_bonds=True, n_threads=-1)
 
-                    # open the file, compress, and encode it
+                    # # open the file, compress, and encode it
                     with open(pdb_filename, 'r', encoding='utf-8') as pdb_file:
                         pdb_data = pdb_file.read()
-                        pdb_zip = gzip.compress(pdb_data.encode())
-                        pdb_enc = base64.b64encode(pdb_zip).decode('utf8')
-                        embedded_structures.append(pdb_enc)
+                        pdb_strings.append(pdb_data)
                 except Exception as ex:
-                    notifications.append(Notification(level=NotificationLevel.ERROR,
-                                                      title='Antibody Structure Prediction',
-                                                      summary=f'Error saving ID {ab_id}/n{ex.__class__} - {ex}',
-                                                      details=f'{traceback.format_exc()}'))
+                    structure_saving_notifications[ab_id] = (ex, f'{traceback.format_exc()}')
 
                     # remove list elements for this broken item
                     ids = ids[:-row_multiplier]
@@ -178,48 +156,124 @@ class AntibodyStructurePrediction(DataFunction):
                     if error_caught:
                         continue
 
-        # antibody numbering or not
-        # assume not, and set standard values for sequence column
+        # antibody numbering
         HL_chain_values = HL_concat_seq
         HL_chain_props = {}
-        HL_chain_content_type = 'chemical/x-sequence'
-        HL_chain_data_type = DataType.STRING
 
-        if do_numbering:
-            try:
-                HL_chain_values, HL_chain_props = self._antibody_numbering([string_to_sequence(s, index)
-                                                                            for index, s in enumerate(HL_concat_seq)],
-                                                                           NumberingScheme.from_str(num_scheme),
-                                                                           CDRDefinitionScheme.from_str(cdr_def))
-                HL_chain_content_type = 'chemical/x-genbank'
-                HL_chain_data_type = DataType.BINARY
-            except Exception as ex:
-                notifications.append(Notification(level=NotificationLevel.ERROR,
-                                                  title='Antibody Structure Prediction - Antibody Numbering',
-                                                  summary=f'An unexpected error occurred\n{ex.__class__} - {ex}',
-                                                  details=f'{traceback.format_exc()}'))
+        try:
+            # get alignment and numbering information from ABB2 results
+            HL_chain_values, HL_chain_props = \
+                extract_ABB2_numbering(ABB2_numbering,
+                                       [AntibodySequencePair(H=h_seq, L=l_seq)
+                                        for h_seq, l_seq in zip(heavy_chain_seq, light_chain_seq)])
 
-        columns = [ColumnData(name = 'ID', dataType = DataType.STRING,
-                              values = ids),
-                   ColumnData(name = 'Compressed Structures', dataType = DataType.BINARY,
-                              contentType = 'chemical/x-pdb', values = embedded_structures,
-                              properties={'Dimension': '3'}),
-                   ColumnData(name = 'Concatenated Chains (Heavy + Light)', dataType = HL_chain_data_type,
-                              contentType = HL_chain_content_type, values = HL_chain_values, properties = HL_chain_props),
-                   ColumnData(name = 'Original Sequence', dataType = DataType.STRING,
-                              contentType='chemical/x-sequence', values = orig_seq),
-                   ColumnData(name = 'Heavy Chain', dataType = DataType.STRING,
-                              contentType = 'chemical/x-sequence', values = heavy_chain_seq),
-                   ColumnData(name = 'Light Chain', dataType = DataType.STRING,
-                              contentType = 'chemical/x-sequence', values = light_chain_seq)]
+        except Exception as ex:
+            notifications.append(Notification(level=NotificationLevel.ERROR,
+                                              title='Antibody Structure Prediction - Antibody Numbering',
+                                              summary=f'An unexpected error occurred\n{ex.__class__} - {ex}',
+                                              details=f'{traceback.format_exc()}'))
+
+        # compile notifications
+        if len(structure_prediction_notifications) != 0:
+            notifications.append(Notification(level=NotificationLevel.ERROR,
+                                              title='Antibody Structure Prediction',
+                                              summary=f'Error for ID(s) ' +
+                                                      '/n'.join(['/t' + str(ab_id)
+                                                                for ab_id in
+                                                                structure_prediction_notifications.keys()]) +
+                                                      '.\n',
+                                              details=''.join([f'{ab_id}\n{ex.__class__} - {ex}\n' + f'{details}\n\n'
+                                                               for ab_id, (ex, details) in
+                                                               structure_prediction_notifications.items()])))
+
+        if len(structure_saving_notifications) != 0:
+            notifications.append(Notification(level=NotificationLevel.ERROR,
+                                              title='Antibody Structure Prediction - File error',
+                                              summary=f'Error for ID(s) ' +
+                                                      '/n'.join(['/t' + str(ab_id)
+                                                                for ab_id in
+                                                                structure_saving_notifications.keys()]) +
+                                                      '.\n',
+                                              details=''.join([f'{ab_id}\n{ex.__class__} - {ex}\n' + f'{details}\n\n'
+                                                               for ab_id, (ex, details) in
+                                                               structure_saving_notifications.items()])))
+
+        # gather output column data
+        output_column_data = {'ID': {'values': ids}}
+        if save_all:
+            output_column_data.update({'Model Number': {'values': model_number},
+                                       'Model Rank': {'values': model_rank}})
+        output_column_data.update({'PDB Structures': {'values': pdb_strings},
+                                   'Concatenated Chains (Heavy + Light)': {'values': HL_chain_values,
+                                                                           'properties': HL_chain_props},
+                                   'Original Sequence': {'values': orig_seq},
+                                   'Heavy Chain': {'values': heavy_chain_seq},
+                                   'Light Chain': {'values': light_chain_seq}
+                                   })
+
+        return output_column_data, notifications
+
+    def execute(self, request: DataFunctionRequest) -> DataFunctionResponse:
+
+        sequence_column = input_field_to_column(request, 'uiAbSeqCol')
+        sequence_column.remove_nulls()
+        ab_sequences = column_to_sequences(sequence_column)
+
+        id_column = input_field_to_column(request, 'uiIDCol')
+        if 'contentType' in id_column and 'chemical' in id_column.contentType:
+            notifications = [Notification(level=NotificationLevel.ERROR,
+                                              title='Antibody Structure Prediction',
+                                              summary='ID column - wrong data type',
+                                              details='The ID column should not be of any type other than a string ' +
+                                                      'or a numeric data type. ' +
+                                                      f'Selected column was of type {id_column.contentType}')]
+
+            return DataFunctionResponse(outputTables=[], notifications=notifications)
+
+        pre_ab_ids = id_column.values
+        ab_ids = []
+        for index, ab_id in enumerate(pre_ab_ids):
+            if index in sequence_column.missing_null_positions:
+                continue
+            if ab_id is None or ab_id.strip() == '':
+                ab_ids.append(f'Row {index + 1}')
+            else:
+                ab_ids.append(ab_id)
+
+        save_all = boolean_input_field(request, 'uiSaveAll')
+
+        # output_table, notifications = self.run_AntibodyStructurePrediction(ab_sequences, ab_ids, save_all)
+        output_column_data, notifications = self.run_AntibodyStructurePrediction(ab_sequences, ab_ids, save_all)
+
+        # convert predicted structures to proper ColumnData object
+        structure_column, embedding_notifications = \
+            structures_to_column(output_column_data['PDB Structures']['values'])
+        notifications.extend(embedding_notifications)
+
+        columns = [ColumnData(name='ID', dataType=DataType.STRING, values=output_column_data['ID']['values']),
+                   structure_column,
+                   ColumnData(name='Concatenated Chains (Heavy + Light)', dataType=DataType.BINARY,
+                              contentType='chemical/x-genbank',
+                              values=output_column_data['Concatenated Chains (Heavy + Light)']['values'],
+                              properties=output_column_data['Concatenated Chains (Heavy + Light)']['properties']),
+                   ColumnData(name='Original Sequence', dataType=DataType.STRING,
+                              contentType='chemical/x-sequence',
+                              values=output_column_data['Original Sequence']['values']),
+                   ColumnData(name='Heavy Chain', dataType=DataType.STRING,
+                              contentType='chemical/x-sequence',
+                              values=output_column_data['Heavy Chain']['values']),
+                   ColumnData(name='Light Chain', dataType=DataType.STRING,
+                              contentType='chemical/x-sequence',
+                              values=output_column_data['Light Chain']['values'])]
 
         if save_all:
-            columns[1:1] = [ColumnData(name = 'Model Number', dataType = DataType.INTEGER,
-                                       values = model_number),
-                            ColumnData(name = 'Model Rank', dataType = DataType.INTEGER,
-                                       values = model_rank)]
+            columns[1:1] = [ColumnData(name='Model Number', dataType=DataType.INTEGER,
+                                       values=output_column_data['Model Number']['values']),
+                            ColumnData(name='Model Rank', dataType=DataType.INTEGER,
+                                       values=output_column_data['Model Rank']['values'])]
 
-        output_table = TableData(tableName = 'Antibody Structure Predictions',
-                                 columns = columns)
+        # compile output table
+        output_table = TableData(tableName='Antibody Structure Predictions',
+                                 columns=columns)
 
-        return DataFunctionResponse(outputTables = [output_table], notifications = notifications)
+        return DataFunctionResponse(outputTables=[output_table], notifications=notifications)

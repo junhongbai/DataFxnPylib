@@ -116,7 +116,9 @@ def molecules_to_column(mols: List[Optional[Mol]], column_name: str, data_type: 
     if content_type is None:
         content_type = _default_content_type(data_type)
     values = [None if m is None else molecule_to_value(m, data_type, content_type) for m in mols]
-    return ColumnData(name=column_name, dataType=data_type, contentType=content_type, values=values)
+    return ColumnData(name=column_name, dataType=data_type, contentType=content_type, values=values,
+                      columnId=None, limitBy=None, limitByMarking=None
+    )
 
 
 def molecule_to_value(mol: Mol, data_type: DataType, content_type: Optional[str]) -> str:

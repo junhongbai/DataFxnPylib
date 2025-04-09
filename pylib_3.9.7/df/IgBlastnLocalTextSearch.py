@@ -33,7 +33,7 @@ class IgBlastnLocalTextSearch(DataFunction):
         format = '"7 std qseq sseq btop"'
 
         query_file = f'query_{id}.fasta'
-        with open(query_file, 'w') as fh:
+        with open(query_file, 'w', encoding='utf8') as fh:
             ungapped = SeqRecord(query_sequence.seq.ungap(), query_sequence.id)
             SeqIO.write([ungapped], fh, 'fasta')
 

@@ -9,6 +9,7 @@ from rdkit import Chem
 from rdkit.Chem import rdFMCS, rdDepictor
 from rdkit.Chem.rdFMCS import MCSResult
 from rdkit.Chem.rdchem import Mol
+from rdkit.Chem.MolStandardize import rdMolStandardize
 
 from df.chem_helper import input_field_to_molecule, molecules_to_column
 from df.data_transfer import DataFunction, DataFunctionRequest, DataFunctionResponse, string_input_field, \
@@ -34,6 +35,9 @@ def mmpdb_query(request: DataFunctionRequest) -> Tuple[str, Mol, str]:
     input_query_mol: Mol = input_field_to_molecule(request, 'queryData')
     # Sanitize to ensure conversion to whole structure from MOL block
     sanitize_mol(input_query_mol)
+    # Standardize to avoid splitting issues with oddly specified chiral centers
+    input_query_mol = rdMolStandardize.Cleanup(input_query_mol)
+    input_query_mol = rdMolStandardize.Normalize(input_query_mol)
     query_smiles: Mol = Chem.MolToSmiles(input_query_mol, True)
     # MMPDB queries use smiles, but mol to smiles may be lossy, so rebuild query mol from query smiles
     query_mol = smiles_to_mol(query_smiles)

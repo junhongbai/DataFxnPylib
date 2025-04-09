@@ -93,6 +93,7 @@ class ReactionTableSearch(DataFunction):
         to_properties: List[List[Optional[float]]] = []
         from_values: List[List[Optional[Any]]] = []
         to_values: List[List[Optional[Any]]] = []
+        unique_results: List[str] = []
         for _ in range(len(property_names)):
             deltas.append([])
             from_properties.append([])
@@ -130,6 +131,13 @@ class ReactionTableSearch(DataFunction):
                     product_smiles = Chem.MolToSmiles(product)
                 except:
                     break
+                
+                #remove automorphism related duplicates
+                result_str = f'{from_id}{product_smiles}'
+                if result_str in unique_results:
+                    continue
+                unique_results.append(result_str)
+                
                 if product_smiles in structure_to_row:
                     other_row = structure_to_row[product_smiles]
                     to_id = ids[other_row]

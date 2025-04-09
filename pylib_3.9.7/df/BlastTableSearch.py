@@ -1,6 +1,6 @@
 from df.bio_helper import column_to_sequences, query_from_request, sequences_to_column
 from df.data_transfer import DataFunction, DataFunctionRequest, DataFunctionResponse, ColumnData, \
-    DataType, boolean_input_field, Notification, NotificationLevel
+    DataType, ColumnFormatter, boolean_input_field, Notification, NotificationLevel
 from ruse.bio.blast_parse import BlastResults, build_common_alignments
 from ruse.bio.blast_search import BlastCreateAndSearch
 
@@ -57,7 +57,8 @@ class BlastTableSearch(DataFunction):
 
         aligned_sequences_column = ColumnData(name='Sequence Pairs', dataType=DataType.STRING,
                                               contentType='chemical/x-sequence-pair', values=aligned_sequences)
-        e_values_column = ColumnData(name='Evalue', dataType=DataType.DOUBLE, values=e_values)
+        e_values_column = ColumnData(name='Evalue', dataType=DataType.DOUBLE, formatter=ColumnFormatter.SCIENTIFIC,
+                                     values=e_values)
         score_column = ColumnData(name='Score', dataType=DataType.LONG, values=scores)
         bits_column = ColumnData(name='Bits', dataType=DataType.DOUBLE, values=bits)
 

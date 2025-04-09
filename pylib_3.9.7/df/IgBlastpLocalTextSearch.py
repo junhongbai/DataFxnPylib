@@ -7,7 +7,7 @@ from Bio.SeqRecord import SeqRecord
 
 from df.bio_helper import query_from_request, sequences_to_column
 from df.data_transfer import DataFunction, DataFunctionRequest, DataFunctionResponse, string_input_field, ColumnData, \
-    TableData, DataType
+    TableData, DataType, ColumnFormatter
 from ruse.bio.antibody import numbering_and_regions_from_sequence, ANTIBODY_NUMBERING_COLUMN_PROPERTY
 from ruse.bio.applications import IgblastpCommandLine
 from ruse.bio.blast_parse import build_common_alignments
@@ -41,7 +41,8 @@ def process_ig_search_results(query_sequence: SeqRecord, results: IgResult, tabl
                              contentType='chemical/x-sequence-pair', values=pairs)
     chain_column = ColumnData(name='Chain', dataType=DataType.STRING, values=chain)
     target_id_column = ColumnData(name='Target Id', dataType=DataType.STRING, values=target_ids)
-    e_value_column = ColumnData(name='EValue', dataType=DataType.DOUBLE, values=evalues)
+    e_value_column = ColumnData(name='EValue', dataType=DataType.DOUBLE, formatter=ColumnFormatter.SCIENTIFIC,
+                                values=evalues)
     bit_column = ColumnData(name='Bits', dataType=DataType.DOUBLE, values=bits)
     columns = [alignment_column, pair_column, chain_column, target_id_column, e_value_column, bit_column]
 
@@ -68,7 +69,7 @@ class IgBlastpLocalTextSearch(DataFunction):
         format = '"7 std qseq sseq btop"'
 
         query_file = f'query_{id}.fasta'
-        with open(query_file, 'w') as fh:
+        with open(query_file, 'w', encoding='utf8') as fh:
             ungapped = SeqRecord(query_sequence.seq.ungap(), query_sequence.id)
             SeqIO.write([ungapped], fh, 'fasta')
 

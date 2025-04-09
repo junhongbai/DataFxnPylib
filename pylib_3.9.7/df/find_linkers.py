@@ -20,6 +20,7 @@ from rdkit.Chem.Draw import rdMolDraw2D
 
 from df.float_range import FloatRange
 from df.int_range import IntRange
+from ruse.util import log
 
 
 # Find linkers in a file of structures using method described in
@@ -852,14 +853,14 @@ def make_image(mol: Chem.Mol, image_dir: Union[str, Path]) -> Path:
     rdMolDraw2D.DrawMoleculeACS1996(drawer, mol)
     drawer.FinishDrawing()
     img_file = image_path / f'{mol.GetProp("_Name")}.svg'
-    with open(img_file, 'w') as f:
+    with open(img_file, 'w', encoding='utf8') as f:
         f.write(drawer.GetDrawingText())
 
     return img_file
 
 
 def start_html_file(html_file: str) -> IO:
-    htmlf = open(html_file, 'w')
+    htmlf = open(html_file, 'w', encoding='utf8')
 
     htmlf.write(f'''<!DOCTYPE html>
     <html lang="en">
@@ -980,7 +981,7 @@ def write_csv_linkers(linkers: dict[str, list[Linker]],
         bool on success
     """
     try:
-        with open(csv_file, 'w', newline='') as fo:
+        with open(csv_file, 'w', newline='', encoding='utf8') as fo:
             csvw = csv.writer(fo)
             csvw.writerow(['Name', 'SMILES', 'Frequency'])
             i = 1
@@ -1114,7 +1115,7 @@ def write_json_linkers(linkers: dict[str, list[Linker]],
         i += 1
 
     try:
-        with open(json_file, 'w', newline='') as fo:
+        with open(json_file, 'w', newline='', encoding='utf8') as fo:
             fo.write(json.dumps(json_list, indent=2))
             fo.write('\n')
     except FileNotFoundError:
@@ -1258,7 +1259,7 @@ def trim_linkers(linkers: dict[str, list[Linker]], min_count: int) -> dict[str, 
 
 
 def main():
-    print(f'Using RDKit version {rdBase.rdkitVersion}.')
+    log.info(f'Using RDKit version {rdBase.rdkitVersion}.')
     # so that properties, such as the _Name, are pickled when passed
     # into the multiprocessing bit.
     Chem.SetDefaultPickleProperties(Chem.PropertyPickleOptions.AllProps)

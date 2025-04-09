@@ -10,6 +10,7 @@ from df.data_transfer import (DataFunction, DataFunctionRequest,
 from rdkit import Chem
 
 from df.replace_bioisostere_linkers import replace_linkers
+from ruse.util import log
 
 LINKER_DB = Path(__file__).parent.parent.parent / 'Data' / 'chembl_32_bioisostere_linkers.db'
 # These 2 values should match those used to make LINKER_DB.  10 and 5
@@ -102,7 +103,7 @@ class LinkerReplacements(DataFunction):
         with cf.ProcessPoolExecutor(max_workers=num_cpus) as pool:
             futures_to_mol_id = {}
             for mol, mol_id in zip(self._parent_mols, self._parent_ids):
-                print(Chem.MolToSmiles(mol))
+                log.info(f'linker replacement smiles {Chem.MolToSmiles(mol)}')
                 if mol is None or not mol:
                     continue
                 fut = pool.submit(replace_linkers, mol, LINKER_DB,

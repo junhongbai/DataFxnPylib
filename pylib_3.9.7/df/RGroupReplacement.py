@@ -24,7 +24,7 @@ def load_replacements_data() -> dict[str: tuple[list[str], list[str]]]:
     """
     im_here = Path(__file__)
     substs_file = im_here.parent.parent.parent / 'Data' / 'top500_R_replacements.json'
-    with open(substs_file, 'r') as f:
+    with open(substs_file, 'r', encoding='utf8') as f:
         raw_substs_data = load(f)
 
     # it's a lot more convenient in use if the outer list is turned
@@ -242,7 +242,7 @@ def align_analogue_to_core(analogue: Chem.Mol, core_query: Chem.Mol) -> None:
 
 
 def assemble_molecule(core: Chem.Mol, rgroups: tuple[Chem.Mol],
-                      polydentate: bool, rgroup_col_names: list[str]) -> Chem.Mol:
+                      polydentate: bool, rgroup_col_names: list[str], rgroup_smiles: list[str]) -> Chem.Mol:
     """
     Take the core and r groups and make them into a molecule, labelling
     the core with GLYS_CORE props on the atoms.  Add a prop
@@ -255,11 +255,13 @@ def assemble_molecule(core: Chem.Mol, rgroups: tuple[Chem.Mol],
 
     rgroups_smis = []
     changed_r_group_list = []
+    changed_r_group_smi = []
     for rg, rg_col_name in zip(rgroups, rgroup_col_names):
         try:
             _ = rg.GetProp('GLYS_ORIG_R_GROUP')
         except KeyError:
             changed_r_group_list.append(rg_col_name)
+            changed_r_group_smi.append(Chem.MolToSmiles(rg))
 
         if polydentate:
             rg_smi = Chem.MolToSmiles(rg)
@@ -272,8 +274,13 @@ def assemble_molecule(core: Chem.Mol, rgroups: tuple[Chem.Mol],
 
     params = Chem.MolzipParams()
     params.label = Chem.rdmolops.MolzipLabel.Isotope
+
     mol = Chem.molzip(mol, params=params)
-    mol.SetProp('GLYS_CHANGED_R_GROUPS', ':'.join(changed_r_group_list))
+    if len(changed_r_group_list) != 0:
+        mol.SetProp('GLYS_CHANGED_R_GROUPS', ':'.join(changed_r_group_list))
+        mol.SetProp('GLYS_REPLACED', '.'.join([rgroup_smiles[crg] if rgroup_smiles[crg] else '' for crg in changed_r_group_list]))
+        mol.SetProp('GLYS_REPLACEMENT', '.'.join(changed_r_group_smi))
+
     try:
         mol = rdmolops.RemoveHs(mol)
     except Chem.rdchem.KekulizeException:
@@ -292,6 +299,7 @@ def build_analogues(core: Chem.Mol, rgroups_line: list[Chem.Mol],
     analogues = []
     rgroup_repls = []
     polydentate = False
+    rgroup_smiles = dict(zip(rgroup_col_names, [Chem.MolToSmiles(m) if m else None for m in rgroups_line]))
     for rgroup, rgroup_col_name in zip(rgroups_line, rgroup_col_names):
         if rgroup is None:
             continue
@@ -318,7 +326,7 @@ def build_analogues(core: Chem.Mol, rgroups_line: list[Chem.Mol],
     # build all combinations of the replacement R Groups onto the core.
     for substs in product(*rgroup_repls):
         analogues.append(assemble_molecule(core, substs, polydentate,
-                                           rgroup_col_names))
+                                           rgroup_col_names, rgroup_smiles))
 
     return analogues
 
@@ -447,12 +455,18 @@ def build_output_objects(all_analogues_by_smi: dict[str: tuple[str, Chem.Mol, Ch
     core_numbers = []
     rgc_prop_name = 'GLYS_CHANGED_R_GROUPS'
     cn_prop_name = 'GLYS_CORE_NUM'
+    replaced_prop_name = 'GLYS_REPLACED'
+    replacement_prop_name = 'GLYS_REPLACEMENT'
+    replaced_col_vals = []
+    replacement_col_vals = []
     for an_smi, (parent_id, analogue, core) in all_analogues_by_smi.items():
         analogue_parents.append(parents_dict[parent_id])
         analogue_parent_ids.append(parent_id)
         analogue_col_vals.append(analogue)
         analogue_cores.append(core)
         analogue_changed_r_groups.append(analogue.GetProp(rgc_prop_name))
+        replaced_col_vals.append(analogue.GetProp(replaced_prop_name))
+        replacement_col_vals.append(analogue.GetProp(replacement_prop_name))
         core_numbers.append(analogue.GetProp(cn_prop_name))
 
     parent_col = molecules_to_column(analogue_parents,
@@ -470,12 +484,19 @@ def build_output_objects(all_analogues_by_smi: dict[str: tuple[str, Chem.Mol, Ch
     analogue_changes_col = ColumnData(name='Changed R Groups',
                                       dataType=DataType.STRING,
                                       values=analogue_changed_r_groups)
-                                      
+    replaced_col = ColumnData(name='Replaced',
+                              dataType=DataType.STRING,
+                              contentType='chemical/x-smiles',
+                              values=replaced_col_vals)
+    replacement_col = ColumnData(name='Replacement',
+                              dataType=DataType.STRING,
+                              contentType='chemical/x-smiles',
+                              values=replacement_col_vals)
     table_name = 'R-Group Replacements'
     table_data = TableData(tableName=table_name,
                            columns=[parent_col, parent_ids_col, analogue_col,
                                     analogue_changes_col, core_nums_col,
-                                    cores_col])
+                                    cores_col, replaced_col, replacement_col])
 
     return table_data, analogue_count_col
 

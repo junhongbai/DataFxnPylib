@@ -1,7 +1,7 @@
 import importlib
 import sys
 
-from df.data_transfer import DataFunctionRequest, DataFunction
+from df.data_transfer import DataFunctionRequest, DataFunction, open_json
 
 if __name__ == '__main__':
     if len(sys.argv) == 3:
@@ -11,7 +11,8 @@ if __name__ == '__main__':
         in_file = 'in.json'
         out_file = 'out.json'
 
-    with open(in_file, 'r') as fh:
+    with open_json(in_file, 'r') as fh:
+        encoding = fh.encoding
         request_json = fh.read()
 
     request = DataFunctionRequest.parse_raw(request_json)  # type: DataFunctionRequest
@@ -22,5 +23,5 @@ if __name__ == '__main__':
     response = df.execute(request)
     response_json = response.json()
 
-    with open(out_file, 'w') as fh:
+    with open(out_file, 'w', encoding=encoding) as fh:
         fh.write(response_json)

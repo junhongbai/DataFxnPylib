@@ -50,7 +50,7 @@ class EnzymeRestriction(DataFunction):
 
         input_column = next(iter(request.inputColumns.values()))
         input_sequences = column_to_sequences(input_column)
-        output_sequences = [search_sequence(s, rb) for s in input_sequences]
+        output_sequences = [None if s is None else search_sequence(s, rb) for s in input_sequences]
 
         rows = [sequence_to_genbank_base64_str(s) for s in output_sequences]
         output_column = ColumnData(name=f'Digested {input_column.name}', dataType=DataType.BINARY,

@@ -8,15 +8,20 @@ Helper functions for data functions that manipulate biological sequences.
 `Biopython <https://biopython.org/>`_ SeqRecord objects are used to represent sequences
 
 """
-
+import base64
+import gzip
 from io import StringIO
-from typing import List, Optional
+import traceback
+from typing import List, Optional, Tuple
 
 from Bio import SeqIO
+from Bio.PDB import PDBParser
+from Bio.PDB.Structure import Structure
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
-from df.data_transfer import ColumnData, DataType, DataFunctionRequest, string_input_field
+from df.data_transfer import ColumnData, DataType, DataFunctionRequest, string_input_field, \
+                             Notification, NotificationLevel
 from ruse.bio.bio_data_table_helper import genbank_base64_str_to_sequence, sequence_to_genbank_base64_str, \
     string_to_sequence
 
@@ -69,6 +74,89 @@ def sequences_to_column(sequences: List[Optional[SeqRecord]], column_name: str, 
         return ColumnData(name=column_name, dataType=DataType.STRING, contentType='chemical/x-sequence', values=values)
 
 
+def column_to_structures(column: ColumnData, id_column: Optional[ColumnData] = None)  \
+        -> Tuple[List[Optional[Structure]], List[Optional[Notification]]]:
+    """
+    Converts a Spotfire column into a list of PDB files
+
+    :param column:  the Spotfire column
+    :param id_column:  if set, row values from this column are used to set the structure identifier
+
+    :return: Tuple of List of Structure objects and List of Notification objects
+    """
+
+    content_type = column.contentType
+    if content_type != 'chemical/x-pdb':
+        raise ValueError(f'Unable to process content type {content_type} as Structure Column.')
+
+    parser = PDBParser(QUIET=True)
+    structures = []
+    notifications = []
+
+    try:
+        for index, data in enumerate(column.values):
+            if id_column:
+                identifier = id_column.values[index]
+            else:
+                identifier = f'Row {index + 1}'
+
+            if data:
+                pdb_zip = base64.b64decode(data)
+                pdb_data = gzip.decompress(pdb_zip).decode()
+
+                with StringIO(pdb_data) as structure_fh:
+                    structure = parser.get_structure(identifier, structure_fh)
+                    structure.id = identifier
+            else:
+                structure = None
+
+            structures.append(structure)
+    except Exception as ex:
+        structures.append(None)
+        notifications.append(Notification(level = NotificationLevel.WARNING,
+                                          title = 'column_to_structures',
+                                          summary = f'Error for structure {identifier}./n{ex.__class__} - {ex}',
+                                          details = f'An error occurred during parsing of the compressed structure.\n' +
+                                                    f'{traceback.format_exc()}'))
+
+    return structures, notifications
+
+def structures_to_column(structures: List[Optional[str]], column_name: str = 'Compressed PDB Structures') \
+        -> Tuple[ColumnData, List[Optional[Notification]]]:
+    """
+    Converts a list of PDB structure files as strings into a Spotfire ColumnData object
+
+    :param structures:  list of Bio.PDB.Structure objects
+    :param column_name:  a string with the desired column name (the default is "Compressed PDB Structures"
+
+    :return: Tuple of ColumnData object and List of Notification objects
+    """
+
+    notifications = []
+    encoded_structures = []
+
+    try:
+        for index, pdb_data in enumerate(structures):
+            if pdb_data:
+                pdb_zip = gzip.compress(pdb_data.encode())
+                pdb_enc = base64.b64encode(pdb_zip).decode('utf8')
+                encoded_structures.append(pdb_enc)
+            else:
+                encoded_structures.append(None)
+    except Exception as ex:
+        encoded_structures.append(None)
+        notifications.append(Notification(level = NotificationLevel.WARNING,
+                                          title = 'structures_to_column',
+                                          summary = f'Error for structure {index}./n{ex.__class__} - {ex}',
+                                          details = f'An error occurred during PDB data compression.\n' +
+                                                    f'{traceback.format_exc()}'))
+
+    column = ColumnData(name = 'Compressed PDB Structures', dataType = DataType.BINARY,
+                        contentType = 'chemical/x-pdb', values = encoded_structures,
+                        properties = {'Dimension': '3', 'Alias': column_name})
+
+    return column, notifications
+
 def query_from_request(request: DataFunctionRequest, input_field_name: str = 'query') -> SeqRecord:
     """
     Converts a string input field into sequence request.  The function will attempt to parse Genbank, then fasta
@@ -97,3 +185,32 @@ def query_from_request(request: DataFunctionRequest, input_field_name: str = 'qu
         sequence = SeqRecord(Seq(query), 'Query')
 
     return sequence
+
+def generate_color_gradient(start_color, end_color, num_steps):
+    """
+    Extract RGB components from hex values
+
+    :param start_color: hex color for start of gradient
+    :param end_color: hex color for end of gradient
+    :param num_steps: number of color steps in gradient
+    :return: a list of hex colors constituting the gradient
+    """
+
+    start_rgb = [int(start_color[i:i+2], 16) / 255.0 for i in (1, 3, 5)]
+    end_rgb = [int(end_color[i:i+2], 16) / 255.0 for i in (1, 3, 5)]
+
+    # Calculate step size for each RGB component
+    r_step = (end_rgb[0] - start_rgb[0]) / (num_steps - 1)
+    g_step = (end_rgb[1] - start_rgb[1]) / (num_steps - 1)
+    b_step = (end_rgb[2] - start_rgb[2]) / (num_steps - 1)
+
+    # Generate a linear gradient in RGB space
+    color_gradient = [
+        '#{0:02x}{1:02x}{2:02x}'.format(
+            int((start_rgb[0] + i * r_step) * 255),
+            int((start_rgb[1] + i * g_step) * 255),
+            int((start_rgb[2] + i * b_step) * 255)
+        ) for i in range(num_steps)
+    ]
+
+    return color_gradient

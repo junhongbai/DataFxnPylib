@@ -20,6 +20,7 @@ from rdkit.Chem import rdmolops, rdDepictor
 
 import df.find_linkers as fl
 from df.int_range import IntRange
+from ruse.util import log
 
 LINKER_COLORS = ['#14aadb', '#3beb24', '#000080', '#f0f060']
 
@@ -806,7 +807,7 @@ def check_smiles(smiles: str) -> bool:
 
 
 def main(cli_args):
-    print(f'Using RDKit version {rdBase.rdkitVersion}.')
+    log.info(f'Using RDKit version {rdBase.rdkitVersion}.')
     # so that properties, such as the _Name, are pickled when passed
     # into the multiprocessing bit.  Passing properties back out
     # requires this to be done in the sub-process as well.

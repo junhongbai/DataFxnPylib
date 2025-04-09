@@ -7,7 +7,9 @@ import re
 import tempfile
 import uuid
 from datetime import datetime
+from os import path
 from typing import List, Final, Optional
+import sqlite3
 
 from df.MmpdbDatabaseSearch import search_mmpdb
 
@@ -67,12 +69,21 @@ def build_mmp_database(mmpdb_dir: str, request: DataFunctionRequest) -> MmpdbPro
         os.makedirs(mmpdb_dir)
 
     if os.path.exists(settings_file):
-        with open(settings_file, 'r') as fh:
+        with open(settings_file, 'r', encoding='utf8') as fh:
             settings_json = fh.read()
 
         settings = MmpdbProperties.parse_raw(settings_json)
         if settings.checksum == input_data_checksum and settings.version == VERSION:
             clean_old_databases(mmpdb_dir, settings.database_file)
+            # ensure that salts file is correct
+            with sqlite3.connect(settings.database_file) as connection:
+                cursor = connection.cursor()
+                resultset = cursor.execute("select fragment_options from dataset")
+                result = resultset.fetchone()
+                options_json = json.loads(result[0])
+                options_json['salt_remover'] = path.join(os.environ['RDBASE'], 'Data', 'Salts.txt')
+                options_str = json.dumps(options_json)
+                cursor.execute("update dataset set fragment_options = ?", (options_str,))
             return settings
         else:
             os.remove(settings_file)
@@ -81,7 +92,7 @@ def build_mmp_database(mmpdb_dir: str, request: DataFunctionRequest) -> MmpdbPro
     uid = str(uuid.uuid4())
     database_file = os.path.join(mmpdb_dir, f'mmpdb_{uid}.mmpdb')
 
-    with open(property_file, 'w') as prop_fh, open(smiles_file, 'w') as smi_fh:
+    with open(property_file, 'w', encoding='utf8') as prop_fh, open(smiles_file, 'w', encoding='utf8') as smi_fh:
         property_name_str = ' '.join(property_names)
         prop_fh.write(f'ID {property_name_str}\n')
         for compound_num in range(0, len(smiles)):
@@ -127,7 +138,7 @@ def build_mmp_database(mmpdb_dir: str, request: DataFunctionRequest) -> MmpdbPro
 
     settings = MmpdbProperties(checksum=input_data_checksum, date_created=datetime.now(), property_names=property_names,
                                database_file=database_file)
-    with open(settings_file, 'w') as fh:
+    with open(settings_file, 'w', encoding='utf8') as fh:
         fh.write(settings.json())
 
     return settings

@@ -5,7 +5,7 @@ from Bio.SeqRecord import SeqRecord
 
 from df.bio_helper import sequences_to_column, query_from_request
 from df.data_transfer import DataFunction, DataFunctionRequest, DataFunctionResponse, string_input_field, \
-    integer_input_field, ColumnData, DataType, TableData, boolean_input_field
+    integer_input_field, ColumnData, DataType, ColumnFormatter, TableData, boolean_input_field
 from ruse.bio.antibody import numbering_and_regions_from_sequence, ANTIBODY_NUMBERING_COLUMN_PROPERTY
 from ruse.bio.bio_data_table_helper import sequence_to_genbank_base64_str
 from ruse.bio.bio_util import is_defined_sequence
@@ -126,7 +126,8 @@ def run_blast_search(sequences: List[SeqRecord], request: DataFunctionRequest, o
     query_id_column = ColumnData(name='Query Id', dataType=DataType.STRING, values=query_ids)
     query_definition_column = ColumnData(name='Query Definition', dataType=DataType.STRING,
                                          values=query_definitions)
-    e_value_column = ColumnData(name='EValue', dataType=DataType.DOUBLE, values=e_values)
+    e_value_column = ColumnData(name='EValue', dataType=DataType.DOUBLE, formatter=ColumnFormatter.SCIENTIFIC,
+                                values=e_values)
     score_column = ColumnData(name='Score', dataType=DataType.LONG, values=scores)
     bit_column = ColumnData(name='Bits', dataType=DataType.DOUBLE, values=bits)
     query_sequence_column = ColumnData(name='Query Sequence', dataType=sequence_data_type,

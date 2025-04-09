@@ -10,10 +10,14 @@ Data transfer model objects and utility functions for Glysade Python data functi
 We use classes derived from `Pydantic Models <https://pydantic-docs.helpmanual.io/>`_.  This allows request and
 response validation and serialization to and from JSON.
 """
-
 from abc import ABC, abstractmethod
+import chardet
+import codecs
+from contextlib import contextmanager
+from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, Any, Dict, List
+import os
+from typing import Optional, Any, Dict, List, Generator, TextIO
 
 from pydantic import BaseModel
 
@@ -22,6 +26,16 @@ from pydantic import BaseModel
 # with pydantic
 # DataValue = Union[str, int, float, bool]
 
+
+class ColumnFormatter(Enum):
+    """
+    A string enum to specify the Spotfire column formatter type.
+
+    Members:
+       * SCIENTIFIC: Scientific notation. Python float.  Assume 2 decimal digits when displayed
+    """
+
+    SCIENTIFIC = 'scientific'
 
 class DataType(Enum):
     """
@@ -132,6 +146,10 @@ class ColumnData(BaseModel):
     """
     The data type stored in the column
     """
+    formatter: Optional[ColumnFormatter]
+    """
+    The formatter for the column (e.g., scientific notation). Available only in Charts version 4.5.0 or later. 
+    """
     properties: Dict[str, str] = {}
     """
     Spotfire column properties
@@ -236,6 +254,11 @@ class TableData(BaseModel):
     A list of columns in the data table
     """
 
+@dataclass
+class AntibodySequencePair():
+    H: str
+    L: str
+
 
 class Notification(BaseModel):
     """
@@ -267,6 +290,56 @@ class Notification(BaseModel):
     """
     A more thorough explanation of the notification.  Often, the text of an exception is used
     """
+
+    @staticmethod
+    def condense_notifications(notifications: dict[str, list['Notification']], title:  str, summary: str) -> 'Notification':
+        """
+        Condense a set of notifications into a single notification
+
+        :param notifications: dictionary with keys being the individual groupings for notifications,
+                              and values being lists of Notification objects to be condensed
+        :param title: An overall title for the returned Notification
+
+        :return: Single Notification object
+        """
+
+        max_level = NotificationLevel.INFORMATION
+        condensed_content = ''
+
+        for key, notification_list in notifications.items():
+            if len(notification_list) == 0:
+                return None
+            elif len(notification_list) == 1:
+                return notification_list[0]
+
+            for notification in notification_list:
+                # upgrade the level to the maximum within the list
+                if notification.level == NotificationLevel.ERROR:
+                     max_level = NotificationLevel.ERROR
+                elif notification.level == NotificationLevel.WARNING and max_level == NotificationLevel.INFORMATION:
+                    max_level = NotificationLevel.WARNING
+                else:
+                    max_level = NotificationLevel.INFORMATION
+
+                # compile all notifications individually
+                condensed_content += f'{key}\n' + \
+                                     f'\t{notification.title}\n' + \
+                                     f'\t{notification.summary}\n' + \
+                                     f'\t{notification.details}\n\n'
+
+        return Notification(level = max_level,
+                            title = title,
+                            summary = summary,
+                            detail = condensed_content)
+
+
+
+
+
+
+
+
+
 
 
 class DataFunctionRequest(BaseModel):
@@ -528,3 +601,29 @@ def input_field_to_columns(request: DataFunctionRequest, field: str) -> Optional
         return None
     columns = [request.inputColumns[key] for key in keys]
     return columns
+
+@contextmanager
+def open_json(filename: str, mode: str) -> Generator[TextIO, None, None]:
+    """
+    A helper method for opening json files inside a context.
+    Attempts to identify UTF encoding when opening and defaults to
+    utf-16 when writing.
+    """
+    if 'r' in mode:
+        bytes = min(32, os.path.getsize(filename))
+        with open(filename, 'rb') as bytes_in:
+            raw = bytes_in.read(bytes)
+
+            if raw.startswith(codecs.BOM_UTF8):
+                encoding = 'utf-8-sig'
+            else:
+                result = chardet.detect(raw)
+                encoding = result['encoding']
+
+    else:
+        encoding = 'UTF-16'
+
+    fh = open(filename, mode, encoding=encoding)
+    yield fh
+
+    fh.close()

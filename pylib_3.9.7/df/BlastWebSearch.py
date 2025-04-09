@@ -1,7 +1,7 @@
 import ruse.bio.blast_search
 from df.bio_helper import sequences_to_column, query_from_request
 from df.data_transfer import DataFunction, DataFunctionRequest, DataFunctionResponse, string_input_field, ColumnData, \
-    DataType, integer_input_field, TableData, boolean_input_field
+    DataType, ColumnFormatter, integer_input_field, TableData, boolean_input_field
 from ruse.bio.bio_data_table_helper import sequence_to_genbank_base64_str
 from ruse.bio.blast_parse import BlastResults, build_common_alignments
 
@@ -81,7 +81,8 @@ class BlastWebSearch(DataFunction):
         target_id_column = ColumnData(name='Target Id', dataType=DataType.STRING, values=target_ids)
         target_definition_column = ColumnData(name='Target Definition', dataType=DataType.STRING,
                                               values=target_definitions)
-        e_value_column = ColumnData(name='EValue', dataType=DataType.DOUBLE, values=e_values)
+        e_value_column = ColumnData(name='EValue', dataType=DataType.DOUBLE, formatter=ColumnFormatter.SCIENTIFIC,
+                                    values=e_values)
         score_column = ColumnData(name='Score', dataType=DataType.LONG, values=scores)
         bit_column = ColumnData(name='Bits', dataType=DataType.DOUBLE, values=bits)
         query_sequence_column = ColumnData(name='Query Sequence', dataType=DataType.STRING,
