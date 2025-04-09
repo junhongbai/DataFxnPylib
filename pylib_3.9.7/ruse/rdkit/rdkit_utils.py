@@ -24,6 +24,8 @@ from rdkit.Chem.MolStandardize import rdMolStandardize
 from rdkit.Chem.rdchem import Mol, KekulizeException, AtomValenceException, Atom, MolSanitizeException
 from rdkit.Geometry.rdGeometry import Point3D
 
+from ruse.util import log
+
 
 class RDKitFormat(Enum):
     """
@@ -151,7 +153,7 @@ def _get_group_number(atom: Atom) -> int:
     if atom.GetAtomMapNum() > 0:
         return atom.GetAtomMapNum()
     if atom.GetIsotope() > 0:
-        return atom.getIsotope()
+        return atom.GetIsotope()
     return 0
 
 
@@ -175,7 +177,7 @@ def sdf_to_mol(mol_string: str, do_sanitize_mol: Optional[bool]=True) -> Optiona
             sanitize_mol(mol)
         except Exception as ex:
             name = type(ex).__name__
-            print('Got exception {} processing sdf input {}'.format(name, mol_string))
+            log.warning('Got exception {} processing sdf input {}'.format(name, mol_string))
             return None
         finally:
             sdf_in.close()
@@ -188,11 +190,11 @@ def sanitize_mol(mol: Mol) -> None:
     try:
         Chem.SanitizeMol(mol)
     except AtomValenceException:
-        print('Atom valence error for sdf input {}'.format(Chem.MolToSmiles(mol)))
+        log.warning('Atom valence error for sdf input {}'.format(Chem.MolToSmiles(mol)))
         flags = SanitizeFlags.SANITIZE_ALL ^ SanitizeFlags.SANITIZE_PROPERTIES
         Chem.SanitizeMol(mol, flags)
     except KekulizeException:
-        print('Kekulization error for molecule {}'.format(Chem.MolToSmiles(mol)))
+        log.warning('Kekulization error for molecule {}'.format(Chem.MolToSmiles(mol)))
         flags = SanitizeFlags.SANITIZE_ALL ^ SanitizeFlags.SANITIZE_KEKULIZE
         Chem.SanitizeMol(mol, flags)
 
@@ -252,22 +254,22 @@ def smiles_to_mol(smiles: str) -> Optional[Mol]:
         if not mol:
             mol = Chem.MolFromSmiles(smiles, sanitize=False)
             if mol:
-                print('Failed to Sanitize smiles {}'.format(smiles))
+                log.warning('Failed to Sanitize smiles {}'.format(smiles))
                 flags = SanitizeFlags.SANITIZE_ALL ^ SanitizeFlags.SANITIZE_PROPERTIES
                 mol.UpdatePropertyCache(False)
                 try:
                     Chem.SanitizeMol(mol, flags)
                 except KekulizeException:
-                    print('Kekulization error for smiles {}'.format(smiles))
+                    log.warning('Kekulization error for smiles {}'.format(smiles))
                     flags = flags ^ SanitizeFlags.SANITIZE_KEKULIZE
                     Chem.SanitizeMol(mol, flags)
             if not mol:
-                print("Failed to convert smiles {} to mol!".format(smiles))
+                log.warning("Failed to convert smiles {} to mol!".format(smiles))
         _standardize_rgroups(mol)
         return mol
     except Exception as ex:
         name = type(ex).__name__
-        print('Got exception {} processing smiles {}'.format(name, smiles))
+        log.warning('Got exception {} processing smiles {}'.format(name, smiles))
         return None
 
 
@@ -415,10 +417,10 @@ def mol_writer(file: str, type: RDKitFormat = None) -> Union[Chem.SDWriter, Chem
         type = file_to_format(file)
     if type == RDKitFormat.sdf:
         if file.lower().endswith('.gz'):
-            fh = gzip.open(file, 'wt')
+            fh = gzip.open(file, 'wt', encoding='utf8')
             writer = Chem.SDWriter(fh)
         else:
-            fh = open(file, 'w')
+            fh = open(file, 'w', encoding='utf8')
             writer = Chem.SDWriter(fh)
     elif type == RDKitFormat.smi:
         assert not file.lower().endswith('.gz')
