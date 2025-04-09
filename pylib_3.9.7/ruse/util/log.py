@@ -102,11 +102,11 @@ def _to_log(level, args):
     :param args: messages
     """
     msg = _to_string(args)
-    with open('task.log','a') as fh:
+    with open('task.log','a', encoding='utf8') as fh:
         logline = level + ": " + datetime.datetime.now().isoformat().split('.')[0] + " " + msg + "\n"
         fh.write(logline)
-    print(msg,file=sys.stderr)
-    sys.stderr.flush()
+    # print(msg,file=sys.stderr)
+    # sys.stderr.flush()
 
 
 def _to_string(args):
